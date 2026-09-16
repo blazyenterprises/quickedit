@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 import tkinter as tk
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import wave
 import winsound
@@ -135,6 +135,7 @@ class AudioDocument:
     cursor_frame: int = 0
     selection_start: int | None = None
     selection_end: int | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
 
     @property
     def frame_size(self) -> int:
@@ -176,6 +177,14 @@ class AudioDocument:
 
 
 class QuickEdit(tk.Tk):
+    COMMON_TAGS = (
+        ("title", "Title"), ("artist", "Artist"), ("album", "Album"),
+        ("track", "Track number"), ("date", "Year or date"), ("label", "Record label"),
+    )
+    OPTIONAL_TAGS = (
+        ("album_artist", "Album artist"), ("disc", "Disc number"), ("genre", "Genre"),
+        ("composer", "Composer"), ("comment", "Comment"), ("copyright", "Copyright"),
+    )
     BUILTIN_EFFECT_PRESETS = {
         "Amplify or Reduce Volume": {"Whisper": {"db": -24}, "Very Quiet": {"db": -18}, "Quiet": {"db": -12}, "Half Volume": {"db": -6}, "Slight Cut": {"db": -3}, "Slight Boost": {"db": 3}, "Strong Boost": {"db": 6}, "Double Volume": {"db": 9}, "Huge Boost": {"db": 15}, "Maximum Boost": {"db": 24}},
         "Echo": {"Tiny Reflection": {"delay": 35, "feedback": 8, "wet": 12}, "Slapback": {"delay": 90, "feedback": 18, "wet": 30}, "Rockabilly": {"delay": 125, "feedback": 24, "wet": 38}, "Bathroom": {"delay": 55, "feedback": 42, "wet": 32}, "Vocal Delay": {"delay": 220, "feedback": 25, "wet": 28}, "Quarter Note Feel": {"delay": 375, "feedback": 38, "wet": 40}, "Deep Echo": {"delay": 430, "feedback": 58, "wet": 52}, "Canyon": {"delay": 720, "feedback": 68, "wet": 62}, "Space Transmission": {"delay": 1100, "feedback": 75, "wet": 72}, "Infinite-ish": {"delay": 650, "feedback": 92, "wet": 82}},
@@ -279,6 +288,9 @@ class QuickEdit(tk.Tk):
         file_menu.add_command(label="Save\tCtrl+S", command=self.save)
         file_menu.add_command(label="Save As\tCtrl+Shift+S", command=self.save_as)
         file_menu.add_command(label="Output Format Settings", command=self.output_format_settings)
+        file_menu.add_separator()
+        file_menu.add_command(label="Edit Audio Tags", command=self.edit_tags)
+        file_menu.add_command(label="Fill Tags from Filename", command=self.fill_tags_from_filename)
         file_menu.add_separator()
         file_menu.add_command(label="Exit\tAlt+F4", command=self.destroy)
         menu.add_cascade(label="File", menu=file_menu)
@@ -767,6 +779,7 @@ class QuickEdit(tk.Tk):
                     save_path=path if os.path.splitext(path)[1].lower() == ".wav" else None,
                     midi_path=path if extension in {".mid", ".midi"} else None,
                     soundfont_path=self.soundfont_path if extension in {".mid", ".midi"} else None,
+                    metadata=self._normalized_metadata(self.media.read_metadata(path)) if extension not in {".mid", ".midi"} else {},
                 )
             if temporary:
                 os.remove(temporary)
@@ -1633,7 +1646,7 @@ class QuickEdit(tk.Tk):
                 self.export_channels and self.export_channels != document.channels,
                 self.export_bit_depth and self.export_bit_depth != document.sample_width * 8,
             ))
-            if extension == ".wav" and not conversion_requested:
+            if extension == ".wav" and not conversion_requested and not document.metadata:
                 self._write_wav(path, document.frames)
             elif extension in {".raw", ".pcm"} and not conversion_requested:
                 with open(path, "wb") as target:
@@ -1649,6 +1662,7 @@ class QuickEdit(tk.Tk):
                         channels=self.export_channels or document.channels,
                         bit_depth=self.export_bit_depth or document.sample_width * 8,
                         bitrate_kbps=self.export_bitrate,
+                        metadata=document.metadata,
                     )
                 finally:
                     if os.path.isfile(wav_path):
@@ -1659,6 +1673,93 @@ class QuickEdit(tk.Tk):
         document.save_path = path
         self.title(f"QuickEdit - {os.path.basename(path)}")
         self.announce(f"Saved {os.path.basename(path)}.")
+
+    @staticmethod
+    def _normalized_metadata(tags: dict[str, str]) -> dict[str, str]:
+        aliases = {
+            "tracknumber": "track", "track_number": "track", "year": "date",
+            "publisher": "label", "organization": "label", "record_label": "label",
+            "albumartist": "album_artist", "album artist": "album_artist",
+            "discnumber": "disc", "disc_number": "disc",
+        }
+        normalized: dict[str, str] = {}
+        for key, value in tags.items():
+            clean_key = aliases.get(key.strip().lower(), key.strip().lower().replace(" ", "_"))
+            clean_value = str(value).strip()
+            if clean_value:
+                normalized[clean_key] = clean_value
+        return normalized
+
+    @staticmethod
+    def _infer_tags_from_path(path: str) -> dict[str, str]:
+        stem = os.path.splitext(os.path.basename(path))[0].strip()
+        parts = [part.strip() for part in re.split(r"\s+-\s+", stem) if part.strip()]
+        inferred: dict[str, str] = {}
+        track_match = re.match(r"^(\d{1,3})(?:[ ._-]+)(.+)$", parts[0] if parts else stem)
+        if track_match:
+            inferred["track"] = str(int(track_match.group(1)))
+            parts[0] = track_match.group(2).strip()
+        if len(parts) >= 3 and parts[0].isdigit():
+            inferred["track"] = str(int(parts.pop(0)))
+        if len(parts) >= 2:
+            inferred["artist"] = parts[0]
+            inferred["title"] = " - ".join(parts[1:])
+        elif parts:
+            inferred["title"] = parts[0]
+        parent = os.path.basename(os.path.dirname(path)).strip()
+        if parent and parent.lower() not in {"music", "downloads", "desktop"}:
+            inferred["album"] = parent
+        return inferred
+
+    def fill_tags_from_filename(self) -> None:
+        document = self.require_document()
+        if not document:
+            return
+        inferred = self._infer_tags_from_path(document.source_path)
+        added = []
+        for key, value in inferred.items():
+            if value and not document.metadata.get(key):
+                document.metadata[key] = value
+                added.append(key.replace("_", " "))
+        self.refresh_details()
+        if added:
+            self.announce(
+                f"Tag Filler added {', '.join(added)} from the filename and folder. "
+                f"Duration is {format_time(document.duration)}. Review the guesses before saving."
+            )
+        else:
+            self.announce("Tag Filler found no empty fields it could safely infer. Opening the tag editor.")
+        self.edit_tags()
+
+    def edit_tags(self) -> None:
+        document = self.require_document()
+        if not document:
+            return
+        dialog = tk.Toplevel(self); dialog.title("Edit Audio Tags"); dialog.transient(self); dialog.grab_set()
+        tk.Label(dialog, text=f"Tags for {os.path.basename(document.source_path)}", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 8))
+        tk.Label(dialog, text=f"Duration: {format_time(document.duration)}. Empty fields are omitted when saving.").grid(row=1, column=0, sticky="w", padx=12)
+        variables: dict[str, tk.StringVar] = {}; entries: list[ttk.Entry] = []
+        all_tags = self.COMMON_TAGS + self.OPTIONAL_TAGS
+        for row, (key, label) in enumerate(all_tags, 2):
+            tk.Label(dialog, text=label).grid(row=row * 2 - 2, column=0, sticky="w", padx=12, pady=(5, 1))
+            variable = tk.StringVar(value=document.metadata.get(key, ""))
+            entry = ttk.Entry(dialog, textvariable=variable, width=60, takefocus=True)
+            entry.grid(row=row * 2 - 1, column=0, sticky="ew", padx=12)
+            entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+            variables[key] = variable; entries.append(entry)
+        buttons = tk.Frame(dialog); buttons.grid(row=len(all_tags) * 2 + 2, column=0, sticky="ew", padx=12, pady=12)
+        def save_tags(event=None) -> str:
+            for key, variable in variables.items():
+                value = variable.get().strip()
+                if value: document.metadata[key] = value
+                else: document.metadata.pop(key, None)
+            self.refresh_details(); dialog.destroy(); self.announce("Audio tags updated. Save the file to write them to disk."); return "break"
+        def cancel(event=None) -> str: dialog.destroy(); return "break"
+        for entry in entries: entry.bind("<Return>", save_tags)
+        self.accessible_button(buttons, "Save Tag Changes", save_tags).pack(side="left")
+        self.accessible_button(buttons, "Cancel Tag Changes", cancel).pack(side="right")
+        dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel); dialog.columnconfigure(0, weight=1)
+        entries[0].focus_set(); self.wait_window(dialog)
 
     def output_format_settings(self) -> None:
         document = self.require_document()
@@ -1730,6 +1831,12 @@ class QuickEdit(tk.Tk):
         self.details_var.set(
             f"File: {os.path.basename(document.source_path)}\n"
             f"Duration: {format_time(document.duration)}\n"
+            f"Title: {document.metadata.get('title', 'Unknown')}\n"
+            f"Artist: {document.metadata.get('artist', 'Unknown')}\n"
+            f"Album: {document.metadata.get('album', 'Unknown')}\n"
+            f"Track: {document.metadata.get('track', 'Unknown')}\n"
+            f"Year: {document.metadata.get('date', 'Unknown')}\n"
+            f"Record label: {document.metadata.get('label', 'Unknown')}\n"
             f"Format: {document.frame_rate} Hz, {document.sample_width * 8}-bit, {channel_text}\n"
             f"Cursor: {format_time(document.seconds_at(document.cursor_frame))}\n"
             f"Arrow movement: {self.navigation_step_text()}\n"

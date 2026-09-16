@@ -222,5 +222,24 @@ class EffectPresetTests(unittest.TestCase):
             self.assertIn(effect, QuickEdit.BUILTIN_EFFECT_PRESETS)
 
 
+class MetadataTests(unittest.TestCase):
+    def test_normalizes_common_tag_aliases(self):
+        tags = QuickEdit._normalized_metadata({
+            "TRACKNUMBER": "03", "YEAR": "1999", "publisher": "Example Records",
+            "albumartist": "Various Artists",
+        })
+        self.assertEqual(tags["track"], "03")
+        self.assertEqual(tags["date"], "1999")
+        self.assertEqual(tags["label"], "Example Records")
+        self.assertEqual(tags["album_artist"], "Various Artists")
+
+    def test_filename_tag_filler_understands_track_artist_title(self):
+        tags = QuickEdit._infer_tags_from_path(os.path.join("Album Name", "07 - Artist Name - Song Name.flac"))
+        self.assertEqual(tags["track"], "7")
+        self.assertEqual(tags["artist"], "Artist Name")
+        self.assertEqual(tags["title"], "Song Name")
+        self.assertEqual(tags["album"], "Album Name")
+
+
 if __name__ == "__main__":
     unittest.main()

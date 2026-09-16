@@ -33,6 +33,10 @@ class MediaBackend:
             os.path.join(app_dir, "ffmpeg.exe"),
             os.path.join(internal, "ffmpeg", "ffmpeg.exe"),
         )
+        self.ffprobe = self._first_existing(
+            os.path.join(app_dir, "ffprobe.exe"),
+            os.path.join(internal, "ffmpeg", "ffprobe.exe"),
+        )
         self.mpv = self._first_existing(
             os.path.join(app_dir, "mpv.exe"),
             os.path.join(internal, "mpv", "mpv.exe"),
@@ -104,7 +108,19 @@ class MediaBackend:
         codec = {1: "pcm_u8", 2: "pcm_s16le", 3: "pcm_s24le", 4: "pcm_s32le"}.get(sample_width, "pcm_s16le")
         self._run([self.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", source, "-af", audio_filter, "-c:a", codec, target])
 
-    def encode(self, wav_source: str, target: str, sample_rate: int | None = None, channels: int | None = None, bit_depth: int = 16, bitrate_kbps: int = 192) -> None:
+    def read_metadata(self, source: str) -> dict[str, str]:
+        if not self.ffprobe:
+            return {}
+        result = self._run([
+            self.ffprobe, "-v", "error", "-show_entries", "format_tags", "-of", "json", source,
+        ])
+        try:
+            tags = json.loads(result.stdout).get("format", {}).get("tags", {})
+        except (ValueError, TypeError):
+            return {}
+        return {str(key).lower(): str(value) for key, value in tags.items() if value is not None}
+
+    def encode(self, wav_source: str, target: str, sample_rate: int | None = None, channels: int | None = None, bit_depth: int = 16, bitrate_kbps: int = 192, metadata: dict[str, str] | None = None) -> None:
         if not self.ffmpeg:
             raise MediaError("FFmpeg was not found. Save as WAV instead.")
         extension = os.path.splitext(target)[1].lower()
@@ -153,7 +169,11 @@ class MediaBackend:
             conversion += ["-ar", str(sample_rate)]
         if channels:
             conversion += ["-ac", str(channels)]
-        self._run([self.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", wav_source, *conversion, *options, target])
+        metadata_options = []
+        for key, value in (metadata or {}).items():
+            if value.strip():
+                metadata_options += ["-metadata", f"{key}={value.strip()}"]
+        self._run([self.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", wav_source, *conversion, *options, *metadata_options, target])
 
     def render_midi(self, midi_source: str, soundfont: str, wav_target: str, sample_rate: int = 44100) -> None:
         if not self.fluidsynth:

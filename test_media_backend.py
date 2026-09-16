@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from media_backend import MediaBackend
 
@@ -35,6 +36,19 @@ class MediaEncodingTests(unittest.TestCase):
         command = commands[0]
         self.assertIn("48000", command)
         self.assertIn("pcm_s24le", command)
+
+    def test_encode_writes_metadata(self):
+        backend, commands = self.backend()
+        backend.encode("source.wav", "target.flac", metadata={"title": "Example", "artist": "Someone"})
+        command = commands[0]
+        self.assertIn("title=Example", command)
+        self.assertIn("artist=Someone", command)
+
+    def test_read_metadata_normalizes_probe_keys(self):
+        backend = object.__new__(MediaBackend)
+        backend.ffprobe = "ffprobe.exe"
+        backend._run = lambda command: SimpleNamespace(stdout='{"format":{"tags":{"TITLE":"Example","Artist":"Someone"}}}')
+        self.assertEqual(backend.read_metadata("song.mp3"), {"title": "Example", "artist": "Someone"})
 
 
 if __name__ == "__main__":
