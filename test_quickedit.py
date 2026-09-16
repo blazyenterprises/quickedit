@@ -194,6 +194,20 @@ class EffectPresetTests(unittest.TestCase):
         self.assertTrue(filter_text.startswith("aecho="))
         self.assertEqual(filter_text.count("|"), 6)
 
+    def test_restoration_and_aging_filters_are_available(self):
+        for effect in (
+            "Vinyl Click and Crackle Removal", "Tape Hiss Reduction",
+            "Add Tape Hiss", "Add Vinyl Crackle",
+        ):
+            self.assertIn(effect, QuickEdit.BUILTIN_EFFECT_PRESETS)
+        repair = QuickEdit._vinyl_repair_filter({"sensitivity": 60, "passes": 3, "burst": 4})
+        self.assertEqual(repair.count("adeclick="), 3)
+        hiss = QuickEdit._tape_hiss_filter({"level": -36, "color": 55})
+        self.assertIn("asplit=2", hiss)
+        self.assertIn("amix=inputs=2", hiss)
+        crackle = QuickEdit._vinyl_crackle_filter({"density": 50, "level": -20})
+        self.assertIn("random", crackle)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -184,6 +184,10 @@ class QuickEdit(tk.Tk):
         "Chorus": {"Subtle Widening": {"wet": 12}, "Light Chorus": {"wet": 25}, "Acoustic Double": {"wet": 35}, "Vocal Double": {"wet": 42}, "Classic Chorus": {"wet": 50}, "Wide Chorus": {"wet": 65}, "Eighties": {"wet": 72}, "Dreamy": {"wet": 80}, "Underwater Ensemble": {"wet": 90}, "Maximum Swarm": {"wet": 100}},
         "Noise Gate": {"Breath Friendly": {"threshold": -55, "attack": 12, "release": 300}, "Gentle Voice": {"threshold": -48, "attack": 8, "release": 220}, "Voice Gate": {"threshold": -42, "attack": 5, "release": 120}, "Podcast": {"threshold": -38, "attack": 4, "release": 160}, "Studio": {"threshold": -35, "attack": 3, "release": 100}, "Drum Cleanup": {"threshold": -30, "attack": 1, "release": 70}, "Hard Gate": {"threshold": -28, "attack": 1, "release": 45}, "Choppy": {"threshold": -24, "attack": 0, "release": 20}, "Sustained": {"threshold": -40, "attack": 15, "release": 800}, "Extreme Cut": {"threshold": -18, "attack": 0, "release": 10}},
         "Noise Reduction": {"Barely There": {"strength": 10}, "Gentle Cleanup": {"strength": 25}, "Light Hiss": {"strength": 35}, "Room Noise": {"strength": 45}, "Voice Recording": {"strength": 55}, "Moderate": {"strength": 65}, "Strong Cleanup": {"strength": 75}, "Heavy Hiss": {"strength": 85}, "Rescue": {"strength": 92}, "Maximum": {"strength": 100}},
+        "Vinyl Click and Crackle Removal": {"Gentle Vinyl": {"sensitivity": 20, "passes": 1, "burst": 1}, "Normal Vinyl": {"sensitivity": 35, "passes": 1, "burst": 2}, "Old LP": {"sensitivity": 45, "passes": 2, "burst": 2}, "Frequent Clicks": {"sensitivity": 55, "passes": 2, "burst": 3}, "Light Crackle": {"sensitivity": 60, "passes": 3, "burst": 3}, "Heavy Crackle": {"sensitivity": 70, "passes": 3, "burst": 4}, "Shellac 78": {"sensitivity": 75, "passes": 4, "burst": 5}, "SuperScan Four Pass": {"sensitivity": 65, "passes": 4, "burst": 4}, "SuperScan Five Pass": {"sensitivity": 72, "passes": 5, "burst": 5}, "Extreme Rescue": {"sensitivity": 90, "passes": 5, "burst": 8}},
+        "Tape Hiss Reduction": {"Barely There": {"reduction": 3, "floor": -65}, "Gentle Cassette": {"reduction": 6, "floor": -60}, "Normal Cassette": {"reduction": 10, "floor": -55}, "Chrome Tape": {"reduction": 12, "floor": -58}, "Reel to Reel": {"reduction": 14, "floor": -62}, "Old Cassette": {"reduction": 18, "floor": -52}, "Heavy Hiss": {"reduction": 24, "floor": -48}, "Very Heavy Hiss": {"reduction": 32, "floor": -44}, "Rescue": {"reduction": 45, "floor": -40}, "Maximum": {"reduction": 60, "floor": -35}},
+        "Add Tape Hiss": {"Fresh Cassette": {"level": -48, "color": 45}, "Quiet Cassette": {"level": -42, "color": 50}, "Normal Cassette": {"level": -36, "color": 55}, "Cheap Tape": {"level": -31, "color": 62}, "Old Cassette": {"level": -28, "color": 68}, "Reel to Reel": {"level": -40, "color": 35}, "VHS Hi-Fi": {"level": -44, "color": 58}, "Dictation Recorder": {"level": -25, "color": 75}, "Damaged Tape": {"level": -20, "color": 82}, "Hiss Apocalypse": {"level": -12, "color": 90}},
+        "Add Vinyl Crackle": {"Clean LP": {"density": 5, "level": -36}, "Occasional Dust": {"density": 12, "level": -30}, "Normal LP": {"density": 20, "level": -26}, "Used Record": {"density": 32, "level": -22}, "Old Vinyl": {"density": 45, "level": -19}, "Scratchy LP": {"density": 58, "level": -16}, "Thrift Store": {"density": 68, "level": -14}, "Shellac 78": {"density": 78, "level": -12}, "Ruined Record": {"density": 90, "level": -8}, "Crackle Apocalypse": {"density": 100, "level": -4}},
         "Low-Pass Filter": {"Air Trim": {"cutoff": 18000}, "Gentle Warmth": {"cutoff": 14000}, "Warm": {"cutoff": 10000}, "Dark": {"cutoff": 7000}, "Old Radio": {"cutoff": 4500}, "Telephone High Cut": {"cutoff": 3400}, "Muffled": {"cutoff": 2200}, "Behind a Wall": {"cutoff": 1200}, "Deep Underwater": {"cutoff": 600}, "Sub Bass Only": {"cutoff": 180}},
         "High-Pass Filter": {"Remove Rumble": {"cutoff": 30}, "Voice Rumble Cut": {"cutoff": 70}, "Podcast": {"cutoff": 90}, "Thin Mix": {"cutoff": 180}, "Small Speaker": {"cutoff": 350}, "Telephone Low Cut": {"cutoff": 500}, "Tinny": {"cutoff": 1000}, "No Bass": {"cutoff": 2000}, "Treble Only": {"cutoff": 5000}, "Extreme": {"cutoff": 10000}},
         "Compressor": {"Transparent": {"threshold": -10, "ratio": 1.5, "attack": 30, "release": 250}, "Gentle": {"threshold": -14, "ratio": 2, "attack": 20, "release": 180}, "Vocal Smooth": {"threshold": -18, "ratio": 3, "attack": 12, "release": 160}, "Voice Leveler": {"threshold": -22, "ratio": 4, "attack": 8, "release": 120}, "Podcast Firm": {"threshold": -24, "ratio": 5, "attack": 5, "release": 100}, "Drum Punch": {"threshold": -12, "ratio": 6, "attack": 25, "release": 80}, "Bass Control": {"threshold": -18, "ratio": 7, "attack": 10, "release": 140}, "Broadcast": {"threshold": -28, "ratio": 8, "attack": 3, "release": 80}, "Heavy": {"threshold": -32, "ratio": 12, "attack": 2, "release": 60}, "Brick Wall": {"threshold": -36, "ratio": 100, "attack": .1, "release": 40}},
@@ -295,6 +299,10 @@ class QuickEdit(tk.Tk):
         effects.add_separator()
         effects.add_command(label="Noise Gate", command=self.noise_gate_audio)
         effects.add_command(label="Noise Reduction", command=self.noise_reduction_audio)
+        effects.add_command(label="Tape Hiss Reduction", command=self.tape_hiss_reduction)
+        effects.add_command(label="Vinyl Click and Crackle Removal", command=self.vinyl_crackle_reduction)
+        effects.add_command(label="Add Tape Hiss", command=self.add_tape_hiss)
+        effects.add_command(label="Add Vinyl Crackle", command=self.add_vinyl_crackle)
         effects.add_command(label="Low-Pass Filter", command=self.lowpass_audio)
         effects.add_command(label="High-Pass Filter", command=self.highpass_audio)
         effects.add_command(label="Compressor", command=self.compressor_audio)
@@ -2035,6 +2043,33 @@ class QuickEdit(tk.Tk):
         except (OSError, ValueError, MediaError) as exc:
             messagebox.showerror(f"{title} preview failed", str(exc), parent=self)
 
+    def _preview_removed_noise(self, title: str, settings: dict[str, float]) -> None:
+        source_data = self._effect_preview_source()
+        if not source_data:
+            return
+        doc, data = source_data
+        self.stop_effect_preview()
+        source_handle, source = tempfile.mkstemp(prefix="quickedit-restoration-source-", suffix=".wav")
+        result_handle, rendered = tempfile.mkstemp(prefix="quickedit-removed-noise-", suffix=".wav")
+        os.close(source_handle); os.close(result_handle)
+        self.effect_preview_files.update((source, rendered))
+        try:
+            self._write_wav(source, data)
+            if title == "Tape Hiss Reduction":
+                audio_filter = f"afftdn=nr={settings['reduction']:g}:nf={settings['floor']:g}:nt=white:tn=1:om=noise"
+            else:
+                repair = self._vinyl_repair_filter(settings)
+                audio_filter = (
+                    f"asplit=2[original][work];[work]{repair}[clean];"
+                    "[original][clean]amix=inputs=2:weights='1 -1':normalize=0"
+                )
+            self.media.transform_wav(source, rendered, audio_filter, doc.sample_width)
+            self.preview_process = self.media.start_playback(rendered, self.output_device)
+            self.announce(f"Playing only the noise removed by {title}, up to 10 seconds.")
+        except (OSError, ValueError, MediaError) as exc:
+            self.stop_effect_preview()
+            messagebox.showerror(f"{title} noise audition failed", str(exc), parent=self)
+
     def _preview_effect_settings(self, title: str, s: dict[str, float]) -> None:
         source_data = self._effect_preview_source()
         if not source_data:
@@ -2056,6 +2091,10 @@ class QuickEdit(tk.Tk):
             "Bass and Treble": lambda: f"bass=g={s['bass']:g},treble=g={s['treble']:g}",
             "Tremolo": lambda: f"tremolo=f={s['rate']:g}:d={s['depth']/100:g}",
             "Distortion": lambda: f"volume={1+s['amount']/8:g},alimiter=limit=0.95:level=false",
+            "Vinyl Click and Crackle Removal": lambda: self._vinyl_repair_filter(s),
+            "Tape Hiss Reduction": lambda: f"afftdn=nr={s['reduction']:g}:nf={s['floor']:g}:nt=white:tn=1",
+            "Add Tape Hiss": lambda: self._tape_hiss_filter(s),
+            "Add Vinyl Crackle": lambda: self._vinyl_crackle_filter(s),
             "Change Speed": lambda: self.media.tempo_filter(s["value"] / 100),
             "Change Pitch": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate},{self.media.tempo_filter(1/(2**(s['value']/12)))}",
             "Tape Pitch and Speed": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate}",
@@ -2164,6 +2203,11 @@ class QuickEdit(tk.Tk):
             self._preview_effect_original(title)
             return "break"
 
+        def preview_removed(event=None) -> str:
+            parsed = self._parse_effect_values(fields, values, entries)
+            if parsed is not None: self._preview_removed_noise(title, parsed)
+            return "break"
+
         def close_dialog(event=None) -> str:
             self.stop_effect_preview()
             dialog.destroy()
@@ -2184,6 +2228,8 @@ class QuickEdit(tk.Tk):
         preset_list.bind("<<ListboxSelect>>", choose_preset)
         self.accessible_button(buttons, "Preview Original", preview_original).pack(side="left")
         self.accessible_button(buttons, f"Preview {title} Effect", preview).pack(side="left", padx=6)
+        if title in {"Tape Hiss Reduction", "Vinyl Click and Crackle Removal"}:
+            self.accessible_button(buttons, "Preview Removed Noise Only", preview_removed).pack(side="left")
         self.accessible_button(buttons, f"Apply {title}", apply).pack(side="left", padx=6)
         self.accessible_button(buttons, "Add Preset", add_preset).pack(side="left")
         self.accessible_button(buttons, f"Cancel {title}", close_dialog).pack(side="right")
@@ -2477,6 +2523,64 @@ class QuickEdit(tk.Tk):
         if settings:
             strength = settings["strength"]
             self._apply_ffmpeg_effect(f"Noise reduction at {strength:g} percent", f"afftdn=nr={1 + strength * .35:g}:nf=-50")
+
+    @staticmethod
+    def _vinyl_repair_filter(settings: dict[str, float]) -> str:
+        sensitivity = settings["sensitivity"]
+        threshold = max(1, 10.5 - sensitivity * .095)
+        passes = max(1, min(5, round(settings["passes"])))
+        stage = f"adeclick=w=55:o=75:a=2:t={threshold:.4g}:b={settings['burst']:g}:m=add"
+        return ",".join(stage for _ in range(passes))
+
+    @staticmethod
+    def _tape_hiss_filter(settings: dict[str, float]) -> str:
+        amplitude = 10 ** (settings["level"] / 20)
+        cutoff = 18000 - settings["color"] * 120
+        return (
+            "asplit=2[original][noise];"
+            f"[noise]aeval='(random(0)-0.5)*{amplitude * 2:.8g}',"
+            f"lowpass=f={max(2500, cutoff):g}[hiss];"
+            "[original][hiss]amix=inputs=2:normalize=0"
+        )
+
+    @staticmethod
+    def _vinyl_crackle_filter(settings: dict[str, float]) -> str:
+        amplitude = 10 ** (settings["level"] / 20)
+        probability = .99998 - settings["density"] * .0000017
+        return f"aeval='val(ch)+if(gt(random(1),{probability:.8g}),(random(2)-0.5)*{amplitude * 2:.8g},0)'"
+
+    def vinyl_crackle_reduction(self) -> None:
+        settings = self.effect_parameters("Vinyl Click and Crackle Removal", [
+            ("sensitivity", "Detection sensitivity percentage, 1 through 100", 40, 1, 100),
+            ("passes", "SuperScan passes, 1 through 5", 2, 1, 5),
+            ("burst", "Maximum click burst width, 0 through 10", 2, 0, 10),
+        ])
+        if settings:
+            self._apply_ffmpeg_effect("Vinyl click and crackle removal", self._vinyl_repair_filter(settings))
+
+    def tape_hiss_reduction(self) -> None:
+        settings = self.effect_parameters("Tape Hiss Reduction", [
+            ("reduction", "Noise reduction in decibels, point 01 through 97", 12, .01, 97),
+            ("floor", "Estimated hiss floor in dBFS, minus 80 through minus 20", -55, -80, -20),
+        ])
+        if settings:
+            self._apply_ffmpeg_effect("Tape hiss reduction", f"afftdn=nr={settings['reduction']:g}:nf={settings['floor']:g}:nt=white:tn=1")
+
+    def add_tape_hiss(self) -> None:
+        settings = self.effect_parameters("Add Tape Hiss", [
+            ("level", "Hiss level in dBFS, minus 60 through minus 6", -36, -60, -6),
+            ("color", "Hiss darkness percentage, 0 through 100", 55, 0, 100),
+        ])
+        if settings:
+            self._apply_ffmpeg_effect("Tape hiss added", self._tape_hiss_filter(settings))
+
+    def add_vinyl_crackle(self) -> None:
+        settings = self.effect_parameters("Add Vinyl Crackle", [
+            ("density", "Crackle density percentage, 1 through 100", 20, 1, 100),
+            ("level", "Crackle level in dBFS, minus 60 through minus 3", -24, -60, -3),
+        ])
+        if settings:
+            self._apply_ffmpeg_effect("Vinyl crackle added", self._vinyl_crackle_filter(settings))
 
     def lowpass_audio(self) -> None:
         settings = self.effect_parameters("Low-Pass Filter", [("cutoff", "Cutoff frequency in Hertz, at least 1", 8000, 1, None)])
