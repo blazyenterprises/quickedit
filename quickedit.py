@@ -176,6 +176,18 @@ class AudioDocument:
 
 
 class QuickEdit(tk.Tk):
+    BUILTIN_EFFECT_PRESETS = {
+        "Echo": {"Slapback": {"delay": 90, "feedback": 18, "wet": 30}, "Deep Echo": {"delay": 430, "feedback": 58, "wet": 52}},
+        "Room Reverb": {"Small Room": {"wet": 20}, "Large Room": {"wet": 55}},
+        "Flanger": {"Gentle Sweep": {"rate": .18, "depth": 2, "wet": 32}, "Jet Sweep": {"rate": .7, "depth": 8, "wet": 70}},
+        "Chorus": {"Light Chorus": {"wet": 25}, "Wide Chorus": {"wet": 65}},
+        "Noise Gate": {"Voice Gate": {"threshold": -42, "attack": 5, "release": 120}, "Hard Gate": {"threshold": -28, "attack": 1, "release": 45}},
+        "Noise Reduction": {"Gentle Cleanup": {"strength": 35}, "Strong Cleanup": {"strength": 80}},
+        "Compressor": {"Gentle": {"threshold": -14, "ratio": 2, "attack": 20, "release": 180}, "Voice Leveler": {"threshold": -22, "ratio": 4, "attack": 8, "release": 120}},
+        "Bass and Treble": {"Bass Boost": {"bass": 6, "treble": 0}, "Treble Boost": {"bass": 0, "treble": 6}, "Telephone": {"bass": -12, "treble": 8}},
+        "Tremolo": {"Slow Pulse": {"rate": 2, "depth": 45}, "Fast Pulse": {"rate": 8, "depth": 70}},
+        "Distortion": {"Warm Drive": {"amount": 15}, "Heavy Drive": {"amount": 70}},
+    }
     NAVIGATION_STEPS = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
 
     def __init__(self) -> None:
@@ -1930,6 +1942,102 @@ class QuickEdit(tk.Tk):
         scope = "selection" if document.selection() else "whole file"
         self.announce(f"{name} applied to {scope}.")
 
+    @property
+    def effect_preset_path(self) -> str:
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "QuickEdit", "effect-presets.json")
+
+    def _load_effect_presets(self) -> dict:
+        try:
+            with open(self.effect_preset_path, "r", encoding="utf-8") as source:
+                data = json.load(source)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_effect_presets(self, presets: dict) -> None:
+        os.makedirs(os.path.dirname(self.effect_preset_path), exist_ok=True)
+        with open(self.effect_preset_path, "w", encoding="utf-8") as target:
+            json.dump(presets, target, indent=2, sort_keys=True)
+
+    def _accessible_text_prompt(self, title: str, label: str) -> str | None:
+        dialog = tk.Toplevel(self); dialog.title(title); dialog.transient(self); dialog.grab_set()
+        value = tk.StringVar(); result: list[str] = []
+        tk.Label(dialog, text=label).pack(anchor="w", padx=12, pady=(12, 4))
+        entry = ttk.Entry(dialog, textvariable=value, width=45, takefocus=True); entry.pack(fill="x", padx=12)
+        buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
+        def accept(event=None):
+            name = value.get().strip()
+            if name: result.append(name); dialog.destroy()
+            else: self.screen_reader.speak(f"{label} cannot be blank.")
+            return "break"
+        entry.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{label}, edit.")); entry.bind("<Return>", accept)
+        self.accessible_button(buttons, "Save Preset", accept).pack(side="left")
+        self.accessible_button(buttons, "Cancel Preset", dialog.destroy).pack(side="right")
+        entry.focus_set(); self.wait_window(dialog)
+        return result[0] if result else None
+
+    def _parse_effect_values(self, fields, values, entries) -> dict[str, float] | None:
+        parsed = {}
+        for key, label, default, minimum, maximum in fields:
+            try: value = float(values[key].get().strip())
+            except ValueError:
+                self.screen_reader.speak(f"{label} must be a number."); entries[key].focus_set(); return None
+            if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+                self.screen_reader.speak(f"{label} is outside its allowed range."); entries[key].focus_set(); return None
+            parsed[key] = value
+        return parsed
+
+    def _preview_effect_settings(self, title: str, s: dict[str, float]) -> None:
+        target = self._effect_range()
+        if not target: return
+        doc, start, end = target; data = doc.slice_bytes(start, end)
+        pcm = {
+            "Amplify or Reduce Volume": lambda: audio_effects.amplify_db(data, doc.sample_width, s["db"]),
+            "Echo": lambda: audio_effects.echo(data, doc.sample_width, doc.channels, doc.frame_rate, s["delay"], s["feedback"] / 100, s["wet"] / 100),
+            "Room Reverb": lambda: audio_effects.reverb(data, doc.sample_width, doc.channels, doc.frame_rate, s["wet"] / 100),
+            "Flanger": lambda: audio_effects.flanger(data, doc.sample_width, doc.channels, doc.frame_rate, s["rate"], s["depth"], s["wet"] / 100),
+            "Chorus": lambda: audio_effects.chorus(data, doc.sample_width, doc.channels, doc.frame_rate, s["wet"] / 100),
+            "Noise Gate": lambda: audio_effects.noise_gate(data, doc.sample_width, doc.channels, doc.frame_rate, s["threshold"], s["attack"], s["release"]),
+            "Noise Reduction": lambda: audio_effects.noise_reduce(data, doc.sample_width, doc.channels, doc.frame_rate, s["strength"] / 100),
+            "Low-Pass Filter": lambda: audio_effects.lowpass(data, doc.sample_width, doc.channels, doc.frame_rate, s["cutoff"]),
+            "High-Pass Filter": lambda: audio_effects.highpass(data, doc.sample_width, doc.channels, doc.frame_rate, s["cutoff"]),
+            "Compressor": lambda: audio_effects.compressor(data, doc.sample_width, doc.channels, doc.frame_rate, s["threshold"], s["ratio"], s["attack"], s["release"]),
+        }
+        filters = {
+            "Bass and Treble": lambda: f"bass=g={s['bass']:g},treble=g={s['treble']:g}",
+            "Tremolo": lambda: f"tremolo=f={s['rate']:g}:d={s['depth']/100:g}",
+            "Distortion": lambda: f"volume={1+s['amount']/8:g},alimiter=limit=0.95:level=false",
+            "Change Speed": lambda: self.media.tempo_filter(s["value"] / 100),
+            "Change Pitch": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate},{self.media.tempo_filter(1/(2**(s['value']/12)))}",
+            "Tape Pitch and Speed": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate}",
+        }
+        h, source = tempfile.mkstemp(prefix="quickedit-preview-", suffix=".wav"); os.close(h)
+        rendered = source
+        try:
+            if title in pcm:
+                self._write_wav(source, pcm[title]())
+            elif title in filters:
+                self._write_wav(source, data)
+                h, rendered = tempfile.mkstemp(prefix="quickedit-preview-result-", suffix=".wav"); os.close(h)
+                self.media.transform_wav(source, rendered, filters[title](), doc.sample_width)
+            else: return
+            if self.preview_process and self.preview_process.poll() is None: self.preview_process.terminate()
+            self.preview_process = self.media.start_playback(rendered, self.output_device)
+            self.announce(f"Previewing {title}.")
+        except (OSError, ValueError, MediaError) as exc:
+            messagebox.showerror(f"{title} preview failed", str(exc), parent=self)
+        finally:
+            # mpv opens the file immediately on Windows; delayed cleanup also
+            # avoids removing it before the player has acquired its handle.
+            for path in {source, rendered}:
+                self.after(5000, lambda item=path: self._remove_preview_file(item))
+
+    @staticmethod
+    def _remove_preview_file(path: str) -> None:
+        try: os.remove(path)
+        except OSError: pass
+
     def effect_parameters(
         self,
         title: str,
@@ -1946,7 +2054,16 @@ class QuickEdit(tk.Tk):
         tk.Label(dialog, text=f"{title} settings", font=("Segoe UI", 12, "bold")).grid(
             row=0, column=0, sticky="w", padx=12, pady=(12, 8)
         )
-        for row, (key, label, default, minimum, maximum) in enumerate(fields, 1):
+        defaults = {key: default for key, label, default, minimum, maximum in fields}
+        custom_presets = self._load_effect_presets().get(title, {})
+        named_presets = {"Default": defaults, **self.BUILTIN_EFFECT_PRESETS.get(title, {}), **custom_presets}
+        tk.Label(dialog, text="Effect presets").grid(row=1, column=0, sticky="w", padx=12, pady=(2, 2))
+        preset_list = tk.Listbox(dialog, exportselection=False, height=5, takefocus=True)
+        for name in named_presets:
+            preset_list.insert("end", name)
+        preset_list.selection_set(0); preset_list.activate(0)
+        preset_list.grid(row=2, column=0, sticky="ew", padx=12)
+        for row, (key, label, default, minimum, maximum) in enumerate(fields, 2):
             tk.Label(dialog, text=label).grid(row=row * 2 - 1, column=0, sticky="w", padx=12, pady=(5, 2))
             variable = tk.StringVar(value=f"{default:g}")
             entry = ttk.Entry(dialog, textvariable=variable, width=28, takefocus=True)
@@ -1955,7 +2072,7 @@ class QuickEdit(tk.Tk):
             values[key] = variable
             entries[key] = entry
         buttons = tk.Frame(dialog)
-        buttons.grid(row=len(fields) * 2 + 1, column=0, sticky="ew", padx=12, pady=12)
+        buttons.grid(row=len(fields) * 2 + 3, column=0, sticky="ew", padx=12, pady=12)
 
         def apply(event=None) -> str:
             parsed: dict[str, float] = {}
@@ -1979,7 +2096,35 @@ class QuickEdit(tk.Tk):
             dialog.destroy()
             return "break"
 
-        self.accessible_button(buttons, f"Apply {title}", apply).pack(side="left")
+        def choose_preset(event=None) -> None:
+            selected = preset_list.curselection()
+            if not selected: return
+            name = preset_list.get(selected[0])
+            for key, value in named_presets[name].items():
+                if key in values: values[key].set(f"{value:g}")
+            self.screen_reader.speak(f"{title} preset {name} loaded.")
+
+        def preview(event=None) -> str:
+            parsed = self._parse_effect_values(fields, values, entries)
+            if parsed is not None: self._preview_effect_settings(title, parsed)
+            return "break"
+
+        def add_preset() -> None:
+            parsed = self._parse_effect_values(fields, values, entries)
+            if parsed is None: return
+            name = self._accessible_text_prompt("Add Effect Preset", "Preset name")
+            if not name: return
+            all_custom = self._load_effect_presets(); all_custom.setdefault(title, {})[name] = parsed
+            self._save_effect_presets(all_custom)
+            named_presets[name] = parsed; preset_list.insert("end", name)
+            preset_list.selection_clear(0, "end"); preset_list.selection_set("end"); preset_list.see("end")
+            self.screen_reader.speak(f"Preset {name} added.")
+
+        preset_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{title} effect presets list."))
+        preset_list.bind("<<ListboxSelect>>", choose_preset)
+        self.accessible_button(buttons, f"Preview {title}", preview).pack(side="left")
+        self.accessible_button(buttons, f"Apply {title}", apply).pack(side="left", padx=6)
+        self.accessible_button(buttons, "Add Preset", add_preset).pack(side="left")
         self.accessible_button(buttons, f"Cancel {title}", dialog.destroy).pack(side="right")
         for entry in entries.values():
             entry.bind("<Return>", apply)
