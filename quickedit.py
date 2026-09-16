@@ -177,16 +177,19 @@ class AudioDocument:
 
 class QuickEdit(tk.Tk):
     BUILTIN_EFFECT_PRESETS = {
-        "Echo": {"Slapback": {"delay": 90, "feedback": 18, "wet": 30}, "Deep Echo": {"delay": 430, "feedback": 58, "wet": 52}},
-        "Room Reverb": {"Small Room": {"wet": 20}, "Large Room": {"wet": 55}},
-        "Flanger": {"Gentle Sweep": {"rate": .18, "depth": 2, "wet": 32}, "Jet Sweep": {"rate": .7, "depth": 8, "wet": 70}},
-        "Chorus": {"Light Chorus": {"wet": 25}, "Wide Chorus": {"wet": 65}},
-        "Noise Gate": {"Voice Gate": {"threshold": -42, "attack": 5, "release": 120}, "Hard Gate": {"threshold": -28, "attack": 1, "release": 45}},
-        "Noise Reduction": {"Gentle Cleanup": {"strength": 35}, "Strong Cleanup": {"strength": 80}},
-        "Compressor": {"Gentle": {"threshold": -14, "ratio": 2, "attack": 20, "release": 180}, "Voice Leveler": {"threshold": -22, "ratio": 4, "attack": 8, "release": 120}},
-        "Bass and Treble": {"Bass Boost": {"bass": 6, "treble": 0}, "Treble Boost": {"bass": 0, "treble": 6}, "Telephone": {"bass": -12, "treble": 8}},
-        "Tremolo": {"Slow Pulse": {"rate": 2, "depth": 45}, "Fast Pulse": {"rate": 8, "depth": 70}},
-        "Distortion": {"Warm Drive": {"amount": 15}, "Heavy Drive": {"amount": 70}},
+        "Amplify or Reduce Volume": {"Whisper": {"db": -24}, "Very Quiet": {"db": -18}, "Quiet": {"db": -12}, "Half Volume": {"db": -6}, "Slight Cut": {"db": -3}, "Slight Boost": {"db": 3}, "Strong Boost": {"db": 6}, "Double Volume": {"db": 9}, "Huge Boost": {"db": 15}, "Maximum Boost": {"db": 24}},
+        "Echo": {"Tiny Reflection": {"delay": 35, "feedback": 8, "wet": 12}, "Slapback": {"delay": 90, "feedback": 18, "wet": 30}, "Rockabilly": {"delay": 125, "feedback": 24, "wet": 38}, "Bathroom": {"delay": 55, "feedback": 42, "wet": 32}, "Vocal Delay": {"delay": 220, "feedback": 25, "wet": 28}, "Quarter Note Feel": {"delay": 375, "feedback": 38, "wet": 40}, "Deep Echo": {"delay": 430, "feedback": 58, "wet": 52}, "Canyon": {"delay": 720, "feedback": 68, "wet": 62}, "Space Transmission": {"delay": 1100, "feedback": 75, "wet": 72}, "Infinite-ish": {"delay": 650, "feedback": 92, "wet": 82}},
+        "Room Reverb": {"Closet": {"wet": 12, "size": 18, "decay": 18}, "Studio Booth": {"wet": 18, "size": 24, "decay": 24}, "Small Room": {"wet": 25, "size": 32, "decay": 32}, "Bedroom": {"wet": 30, "size": 40, "decay": 38}, "Live Room": {"wet": 38, "size": 50, "decay": 48}, "Large Room": {"wet": 48, "size": 62, "decay": 58}, "Auditorium": {"wet": 58, "size": 74, "decay": 68}, "Concert Hall": {"wet": 70, "size": 88, "decay": 82}, "Cathedral": {"wet": 82, "size": 100, "decay": 92}, "Bottomless Cathedral": {"wet": 100, "size": 100, "decay": 98}},
+        "Flanger": {"Barely There": {"rate": .08, "depth": 1, "wet": 15}, "Gentle Sweep": {"rate": .18, "depth": 2, "wet": 32}, "Slow Wide": {"rate": .1, "depth": 8, "wet": 52}, "Classic": {"rate": .35, "depth": 5, "wet": 50}, "Stereo Dream": {"rate": .22, "depth": 10, "wet": 58}, "Jet Sweep": {"rate": .7, "depth": 8, "wet": 70}, "Fast Jet": {"rate": 1.5, "depth": 6, "wet": 75}, "Metallic": {"rate": 3, "depth": 2, "wet": 80}, "Underwater": {"rate": .12, "depth": 18, "wet": 72}, "Extreme": {"rate": 6, "depth": 25, "wet": 95}},
+        "Chorus": {"Subtle Widening": {"wet": 12}, "Light Chorus": {"wet": 25}, "Acoustic Double": {"wet": 35}, "Vocal Double": {"wet": 42}, "Classic Chorus": {"wet": 50}, "Wide Chorus": {"wet": 65}, "Eighties": {"wet": 72}, "Dreamy": {"wet": 80}, "Underwater Ensemble": {"wet": 90}, "Maximum Swarm": {"wet": 100}},
+        "Noise Gate": {"Breath Friendly": {"threshold": -55, "attack": 12, "release": 300}, "Gentle Voice": {"threshold": -48, "attack": 8, "release": 220}, "Voice Gate": {"threshold": -42, "attack": 5, "release": 120}, "Podcast": {"threshold": -38, "attack": 4, "release": 160}, "Studio": {"threshold": -35, "attack": 3, "release": 100}, "Drum Cleanup": {"threshold": -30, "attack": 1, "release": 70}, "Hard Gate": {"threshold": -28, "attack": 1, "release": 45}, "Choppy": {"threshold": -24, "attack": 0, "release": 20}, "Sustained": {"threshold": -40, "attack": 15, "release": 800}, "Extreme Cut": {"threshold": -18, "attack": 0, "release": 10}},
+        "Noise Reduction": {"Barely There": {"strength": 10}, "Gentle Cleanup": {"strength": 25}, "Light Hiss": {"strength": 35}, "Room Noise": {"strength": 45}, "Voice Recording": {"strength": 55}, "Moderate": {"strength": 65}, "Strong Cleanup": {"strength": 75}, "Heavy Hiss": {"strength": 85}, "Rescue": {"strength": 92}, "Maximum": {"strength": 100}},
+        "Low-Pass Filter": {"Air Trim": {"cutoff": 18000}, "Gentle Warmth": {"cutoff": 14000}, "Warm": {"cutoff": 10000}, "Dark": {"cutoff": 7000}, "Old Radio": {"cutoff": 4500}, "Telephone High Cut": {"cutoff": 3400}, "Muffled": {"cutoff": 2200}, "Behind a Wall": {"cutoff": 1200}, "Deep Underwater": {"cutoff": 600}, "Sub Bass Only": {"cutoff": 180}},
+        "High-Pass Filter": {"Remove Rumble": {"cutoff": 30}, "Voice Rumble Cut": {"cutoff": 70}, "Podcast": {"cutoff": 90}, "Thin Mix": {"cutoff": 180}, "Small Speaker": {"cutoff": 350}, "Telephone Low Cut": {"cutoff": 500}, "Tinny": {"cutoff": 1000}, "No Bass": {"cutoff": 2000}, "Treble Only": {"cutoff": 5000}, "Extreme": {"cutoff": 10000}},
+        "Compressor": {"Transparent": {"threshold": -10, "ratio": 1.5, "attack": 30, "release": 250}, "Gentle": {"threshold": -14, "ratio": 2, "attack": 20, "release": 180}, "Vocal Smooth": {"threshold": -18, "ratio": 3, "attack": 12, "release": 160}, "Voice Leveler": {"threshold": -22, "ratio": 4, "attack": 8, "release": 120}, "Podcast Firm": {"threshold": -24, "ratio": 5, "attack": 5, "release": 100}, "Drum Punch": {"threshold": -12, "ratio": 6, "attack": 25, "release": 80}, "Bass Control": {"threshold": -18, "ratio": 7, "attack": 10, "release": 140}, "Broadcast": {"threshold": -28, "ratio": 8, "attack": 3, "release": 80}, "Heavy": {"threshold": -32, "ratio": 12, "attack": 2, "release": 60}, "Brick Wall": {"threshold": -36, "ratio": 100, "attack": .1, "release": 40}},
+        "Bass and Treble": {"Gentle Warmth": {"bass": 3, "treble": -1}, "Bass Boost": {"bass": 6, "treble": 0}, "Huge Bass": {"bass": 12, "treble": -2}, "Gentle Clarity": {"bass": 0, "treble": 3}, "Treble Boost": {"bass": 0, "treble": 6}, "Bright": {"bass": -2, "treble": 10}, "Smile Curve": {"bass": 6, "treble": 6}, "Mid Focus": {"bass": -4, "treble": -4}, "Telephone": {"bass": -12, "treble": 8}, "Lo-Fi": {"bass": -10, "treble": -10}},
+        "Tremolo": {"Gentle Sway": {"rate": .8, "depth": 20}, "Slow Pulse": {"rate": 2, "depth": 45}, "Classic": {"rate": 4, "depth": 50}, "Guitar Amp": {"rate": 5, "depth": 60}, "Fast Pulse": {"rate": 8, "depth": 70}, "Helicopter": {"rate": 12, "depth": 90}, "Stutter": {"rate": 20, "depth": 100}, "Slow Chop": {"rate": 1.5, "depth": 100}, "Nervous": {"rate": 35, "depth": 75}, "Ring Buzz": {"rate": 70, "depth": 95}},
+        "Distortion": {"Soft Saturation": {"amount": 5}, "Warm Drive": {"amount": 15}, "Tube Crunch": {"amount": 25}, "Blues Drive": {"amount": 35}, "Rock Rhythm": {"amount": 45}, "Hard Rock": {"amount": 60}, "Heavy Drive": {"amount": 70}, "Metal": {"amount": 82}, "Destroyed Speaker": {"amount": 92}, "Maximum Carnage": {"amount": 100}},
     }
     NAVIGATION_STEPS = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
 
@@ -2040,7 +2043,6 @@ class QuickEdit(tk.Tk):
         pcm = {
             "Amplify or Reduce Volume": lambda: audio_effects.amplify_db(data, doc.sample_width, s["db"]),
             "Echo": lambda: audio_effects.echo(data, doc.sample_width, doc.channels, doc.frame_rate, s["delay"], s["feedback"] / 100, s["wet"] / 100),
-            "Room Reverb": lambda: audio_effects.reverb(data, doc.sample_width, doc.channels, doc.frame_rate, s["wet"] / 100),
             "Flanger": lambda: audio_effects.flanger(data, doc.sample_width, doc.channels, doc.frame_rate, s["rate"], s["depth"], s["wet"] / 100),
             "Chorus": lambda: audio_effects.chorus(data, doc.sample_width, doc.channels, doc.frame_rate, s["wet"] / 100),
             "Noise Gate": lambda: audio_effects.noise_gate(data, doc.sample_width, doc.channels, doc.frame_rate, s["threshold"], s["attack"], s["release"]),
@@ -2050,6 +2052,7 @@ class QuickEdit(tk.Tk):
             "Compressor": lambda: audio_effects.compressor(data, doc.sample_width, doc.channels, doc.frame_rate, s["threshold"], s["ratio"], s["attack"], s["release"]),
         }
         filters = {
+            "Room Reverb": lambda: self._reverb_filter(s),
             "Bass and Treble": lambda: f"bass=g={s['bass']:g},treble=g={s['treble']:g}",
             "Tremolo": lambda: f"tremolo=f={s['rate']:g}:d={s['depth']/100:g}",
             "Distortion": lambda: f"volume={1+s['amount']/8:g},alimiter=limit=0.95:level=false",
@@ -2197,7 +2200,7 @@ class QuickEdit(tk.Tk):
         settings = self.effect_parameters("Amplify or Reduce Volume", [("db", "Volume change in decibels, minus 96 through plus 24", 3, -96, 24)])
         if settings:
             value = settings["db"]
-            self._apply_effect(f"Volume change of {value:g} decibels", lambda data, doc: audio_effects.amplify_db(data, doc.sample_width, value))
+            self._apply_ffmpeg_effect(f"Volume change of {value:g} decibels", f"volume={value:g}dB")
 
     def _insert_generated_audio(self, frames: bytes, title: str, rate: int = 44100, width: int = 2, channels: int = 1) -> None:
         self.stop(announce=False)
@@ -2404,7 +2407,7 @@ class QuickEdit(tk.Tk):
         self.announce(f"Selection censored with {method}.")
 
     def normalize_audio(self) -> None:
-        self._apply_effect("Normalize", lambda data, doc: audio_effects.normalize(data, doc.sample_width))
+        self._apply_ffmpeg_effect("Normalize", "dynaudnorm=f=150:g=15:p=0.95")
 
     def echo_audio(self) -> None:
         settings = self.effect_parameters("Echo", [
@@ -2414,16 +2417,32 @@ class QuickEdit(tk.Tk):
         ])
         if not settings: return
         delay, feedback_percent, wet_percent = settings["delay"], settings["feedback"], settings["wet"]
-        self._apply_effect(
+        decay = min(.95, feedback_percent / 100)
+        self._apply_ffmpeg_effect(
             f"Echo, {delay:g} milliseconds, {feedback_percent:g} percent feedback",
-            lambda data, doc: audio_effects.echo(data, doc.sample_width, doc.channels, doc.frame_rate, delay, feedback_percent / 100, wet_percent / 100),
+            f"aecho=0.8:{max(.01, wet_percent / 100):.4g}:{delay:g}:{decay:.4g}",
         )
 
     def reverb_audio(self) -> None:
-        settings = self.effect_parameters("Room Reverb", [("wet", "Wet mix percentage, 0 through 100", 35, 0, 100)])
+        settings = self.effect_parameters("Room Reverb", [
+            ("wet", "Wet mix percentage, 0 through 100", 35, 0, 100),
+            ("size", "Room size percentage, 1 through 100", 45, 1, 100),
+            ("decay", "Decay percentage, 1 through 99", 45, 1, 99),
+        ])
         if settings:
-            wet = settings["wet"]
-            self._apply_effect(f"Room reverb at {wet:g} percent", lambda data, doc: audio_effects.reverb(data, doc.sample_width, doc.channels, doc.frame_rate, wet / 100))
+            self._apply_ffmpeg_effect(
+                f"Room reverb at {settings['wet']:g} percent",
+                self._reverb_filter(settings),
+            )
+
+    @staticmethod
+    def _reverb_filter(settings: dict[str, float]) -> str:
+        size = settings.get("size", 45) / 100
+        decay = settings.get("decay", 45) / 100
+        wet = settings["wet"] / 100
+        delays = [round((35 + size * 85) * factor) for factor in (1, 1.43, 1.91, 2.57)]
+        decays = [min(.99, decay * factor) for factor in (1, .82, .66, .5)]
+        return f"aecho=0.8:{max(.01, wet):.4g}:{'|'.join(map(str, delays))}:{'|'.join(f'{item:.4g}' for item in decays)}"
 
     def flanger_audio(self) -> None:
         settings = self.effect_parameters("Flanger", [
@@ -2433,13 +2452,14 @@ class QuickEdit(tk.Tk):
         ])
         if settings:
             rate, depth, wet = settings["rate"], settings["depth"], settings["wet"]
-            self._apply_effect("Flanger", lambda data, doc: audio_effects.flanger(data, doc.sample_width, doc.channels, doc.frame_rate, rate, depth, wet / 100))
+            self._apply_ffmpeg_effect("Flanger", f"flanger=delay={depth:g}:depth={wet / 100 * 10:g}:regen=0:width=71:speed={rate:g}:shape=sinusoidal:phase=25:interp=linear")
 
     def chorus_audio(self) -> None:
         settings = self.effect_parameters("Chorus", [("wet", "Wet mix percentage, 0 through 100", 45, 0, 100)])
         if settings:
             wet = settings["wet"]
-            self._apply_effect(f"Chorus at {wet:g} percent", lambda data, doc: audio_effects.chorus(data, doc.sample_width, doc.channels, doc.frame_rate, wet / 100))
+            gain = max(.01, wet / 100)
+            self._apply_ffmpeg_effect(f"Chorus at {wet:g} percent", f"chorus=0.7:{gain:.4g}:55|63:0.4|0.32:0.25|0.4:2|2.3")
 
     def noise_gate_audio(self) -> None:
         settings = self.effect_parameters("Noise Gate", [
@@ -2449,25 +2469,26 @@ class QuickEdit(tk.Tk):
         ])
         if settings:
             threshold, attack, release = settings["threshold"], settings["attack"], settings["release"]
-            self._apply_effect(f"Noise gate at {threshold:g} dB", lambda data, doc: audio_effects.noise_gate(data, doc.sample_width, doc.channels, doc.frame_rate, threshold, attack, release))
+            linear_threshold = 10 ** (threshold / 20)
+            self._apply_ffmpeg_effect(f"Noise gate at {threshold:g} dB", f"agate=threshold={linear_threshold:.8g}:ratio=9000:attack={max(.01, attack):g}:release={max(.01, release):g}")
 
     def noise_reduction_audio(self) -> None:
         settings = self.effect_parameters("Noise Reduction", [("strength", "Reduction strength percentage, 0 through 100", 65, 0, 100)])
         if settings:
             strength = settings["strength"]
-            self._apply_effect(f"Noise reduction at {strength:g} percent", lambda data, doc: audio_effects.noise_reduce(data, doc.sample_width, doc.channels, doc.frame_rate, strength / 100))
+            self._apply_ffmpeg_effect(f"Noise reduction at {strength:g} percent", f"afftdn=nr={1 + strength * .35:g}:nf=-50")
 
     def lowpass_audio(self) -> None:
         settings = self.effect_parameters("Low-Pass Filter", [("cutoff", "Cutoff frequency in Hertz, at least 1", 8000, 1, None)])
         if settings:
             cutoff = settings["cutoff"]
-            self._apply_effect(f"Low-pass filter at {cutoff:g} Hz", lambda data, doc: audio_effects.lowpass(data, doc.sample_width, doc.channels, doc.frame_rate, cutoff))
+            self._apply_ffmpeg_effect(f"Low-pass filter at {cutoff:g} Hz", f"lowpass=f={cutoff:g}")
 
     def highpass_audio(self) -> None:
         settings = self.effect_parameters("High-Pass Filter", [("cutoff", "Cutoff frequency in Hertz, at least 1", 80, 1, None)])
         if settings:
             cutoff = settings["cutoff"]
-            self._apply_effect(f"High-pass filter at {cutoff:g} Hz", lambda data, doc: audio_effects.highpass(data, doc.sample_width, doc.channels, doc.frame_rate, cutoff))
+            self._apply_ffmpeg_effect(f"High-pass filter at {cutoff:g} Hz", f"highpass=f={cutoff:g}")
 
     def compressor_audio(self) -> None:
         settings = self.effect_parameters("Compressor", [
@@ -2479,7 +2500,8 @@ class QuickEdit(tk.Tk):
         if settings:
             threshold, ratio = settings["threshold"], settings["ratio"]
             attack, release = settings["attack"], settings["release"]
-            self._apply_effect(f"Compressor at {threshold:g} dB, {ratio:g} to 1", lambda data, doc: audio_effects.compressor(data, doc.sample_width, doc.channels, doc.frame_rate, threshold, ratio, attack, release))
+            linear_threshold = 10 ** (threshold / 20)
+            self._apply_ffmpeg_effect(f"Compressor at {threshold:g} dB, {ratio:g} to 1", f"acompressor=threshold={linear_threshold:.8g}:ratio={ratio:g}:attack={attack:g}:release={release:g}")
 
     def bass_treble_audio(self) -> None:
         settings = self.effect_parameters("Bass and Treble", [
@@ -2515,6 +2537,8 @@ class QuickEdit(tk.Tk):
         h2, target_path = tempfile.mkstemp(prefix="quickedit-effect-result-", suffix=".wav")
         os.close(h1); os.close(h2)
         try:
+            self.announce(f"Applying {name}. Please wait.")
+            self.update_idletasks()
             self._write_wav(source_path, document.slice_bytes(start, end))
             self.media.transform_wav(source_path, target_path, audio_filter, document.sample_width)
             with wave.open(target_path, "rb") as source:
@@ -2525,11 +2549,14 @@ class QuickEdit(tk.Tk):
             if document.selection():
                 document.selection_start, document.selection_end = start, start + len(changed) // document.frame_size
             self.refresh_details(); self.announce(f"{name} complete.")
-        except (OSError, wave.Error, MediaError) as exc:
+        except (OSError, ValueError, wave.Error, MediaError) as exc:
             messagebox.showerror(f"{name} failed", str(exc), parent=self)
         finally:
             for path in (source_path, target_path):
-                if os.path.isfile(path): os.remove(path)
+                try:
+                    if os.path.isfile(path): os.remove(path)
+                except OSError:
+                    pass
 
     def change_speed(self) -> None:
         settings = self.effect_parameters("Change Speed", [("value", "New speed percentage, 10 through 800", 100, 10, 800)])

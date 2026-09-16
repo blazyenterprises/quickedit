@@ -180,5 +180,20 @@ class FileHistoryTests(unittest.TestCase):
             self.assertEqual(sum(os.path.normcase(item) == os.path.normcase(selected) for item in editor.recent_files), 1)
 
 
+class EffectPresetTests(unittest.TestCase):
+    def test_adjustable_effects_offer_at_least_ten_presets(self):
+        for effect, presets in QuickEdit.BUILTIN_EFFECT_PRESETS.items():
+            self.assertGreaterEqual(len(presets), 10, effect)
+
+    def test_reverb_includes_extreme_spaces(self):
+        presets = QuickEdit.BUILTIN_EFFECT_PRESETS["Room Reverb"]
+        self.assertIn("Concert Hall", presets)
+        self.assertIn("Cathedral", presets)
+        self.assertIn("Bottomless Cathedral", presets)
+        filter_text = QuickEdit._reverb_filter(presets["Cathedral"])
+        self.assertTrue(filter_text.startswith("aecho="))
+        self.assertEqual(filter_text.count("|"), 6)
+
+
 if __name__ == "__main__":
     unittest.main()
