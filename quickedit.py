@@ -1930,16 +1930,68 @@ class QuickEdit(tk.Tk):
         scope = "selection" if document.selection() else "whole file"
         self.announce(f"{name} applied to {scope}.")
 
-    def amplify(self) -> None:
-        value = simpledialog.askfloat(
-            "Amplify or reduce volume",
-            "Enter decibels. Positive makes it louder; negative makes it quieter:",
-            parent=self,
-            initialvalue=3.0,
-            minvalue=-96.0,
-            maxvalue=24.0,
+    def effect_parameters(
+        self,
+        title: str,
+        fields: list[tuple[str, str, float, float | None, float | None]],
+    ) -> dict[str, float] | None:
+        """Show one NVDA-friendly window for all numeric effect parameters."""
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.transient(self)
+        dialog.grab_set()
+        values: dict[str, tk.StringVar] = {}
+        entries: dict[str, ttk.Entry] = {}
+        result: list[dict[str, float]] = []
+        tk.Label(dialog, text=f"{title} settings", font=("Segoe UI", 12, "bold")).grid(
+            row=0, column=0, sticky="w", padx=12, pady=(12, 8)
         )
-        if value is not None:
+        for row, (key, label, default, minimum, maximum) in enumerate(fields, 1):
+            tk.Label(dialog, text=label).grid(row=row * 2 - 1, column=0, sticky="w", padx=12, pady=(5, 2))
+            variable = tk.StringVar(value=f"{default:g}")
+            entry = ttk.Entry(dialog, textvariable=variable, width=28, takefocus=True)
+            entry.grid(row=row * 2, column=0, sticky="ew", padx=12)
+            entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+            values[key] = variable
+            entries[key] = entry
+        buttons = tk.Frame(dialog)
+        buttons.grid(row=len(fields) * 2 + 1, column=0, sticky="ew", padx=12, pady=12)
+
+        def apply(event=None) -> str:
+            parsed: dict[str, float] = {}
+            for key, label, default, minimum, maximum in fields:
+                try:
+                    value = float(values[key].get().strip())
+                except ValueError:
+                    self.screen_reader.speak(f"{label} must be a number.")
+                    entries[key].focus_set()
+                    return "break"
+                if minimum is not None and value < minimum or maximum is not None and value > maximum:
+                    range_text = (
+                        f"from {minimum:g} through {maximum:g}" if minimum is not None and maximum is not None
+                        else f"at least {minimum:g}" if minimum is not None else f"no more than {maximum:g}"
+                    )
+                    self.screen_reader.speak(f"{label} must be {range_text}.")
+                    entries[key].focus_set()
+                    return "break"
+                parsed[key] = value
+            result.append(parsed)
+            dialog.destroy()
+            return "break"
+
+        self.accessible_button(buttons, f"Apply {title}", apply).pack(side="left")
+        self.accessible_button(buttons, f"Cancel {title}", dialog.destroy).pack(side="right")
+        for entry in entries.values():
+            entry.bind("<Return>", apply)
+        dialog.columnconfigure(0, weight=1)
+        next(iter(entries.values())).focus_set()
+        self.wait_window(dialog)
+        return result[0] if result else None
+
+    def amplify(self) -> None:
+        settings = self.effect_parameters("Amplify or Reduce Volume", [("db", "Volume change in decibels, minus 96 through plus 24", 3, -96, 24)])
+        if settings:
+            value = settings["db"]
             self._apply_effect(f"Volume change of {value:g} decibels", lambda data, doc: audio_effects.amplify_db(data, doc.sample_width, value))
 
     def _insert_generated_audio(self, frames: bytes, title: str, rate: int = 44100, width: int = 2, channels: int = 1) -> None:
@@ -2036,101 +2088,102 @@ class QuickEdit(tk.Tk):
         self._apply_effect("Normalize", lambda data, doc: audio_effects.normalize(data, doc.sample_width))
 
     def echo_audio(self) -> None:
-        delay = simpledialog.askfloat(
-            "Echo delay", "Delay in milliseconds:", parent=self,
-            initialvalue=250.0, minvalue=1.0, maxvalue=5000.0,
-        )
-        if delay is None:
-            return
-        feedback_percent = simpledialog.askfloat(
-            "Echo feedback", "Feedback percentage:", parent=self,
-            initialvalue=40.0, minvalue=0.0, maxvalue=95.0,
-        )
-        if feedback_percent is None:
-            return
-        wet_percent = simpledialog.askfloat(
-            "Echo mix", "Wet mix percentage:", parent=self,
-            initialvalue=45.0, minvalue=0.0, maxvalue=100.0,
-        )
-        if wet_percent is None:
-            return
+        settings = self.effect_parameters("Echo", [
+            ("delay", "Delay in milliseconds, 1 through 5000", 250, 1, 5000),
+            ("feedback", "Feedback percentage, 0 through 95", 40, 0, 95),
+            ("wet", "Wet mix percentage, 0 through 100", 45, 0, 100),
+        ])
+        if not settings: return
+        delay, feedback_percent, wet_percent = settings["delay"], settings["feedback"], settings["wet"]
         self._apply_effect(
             f"Echo, {delay:g} milliseconds, {feedback_percent:g} percent feedback",
             lambda data, doc: audio_effects.echo(data, doc.sample_width, doc.channels, doc.frame_rate, delay, feedback_percent / 100, wet_percent / 100),
         )
 
     def reverb_audio(self) -> None:
-        wet = simpledialog.askfloat("Room reverb", "Wet mix percentage:", parent=self, initialvalue=35, minvalue=0, maxvalue=100)
-        if wet is not None:
+        settings = self.effect_parameters("Room Reverb", [("wet", "Wet mix percentage, 0 through 100", 35, 0, 100)])
+        if settings:
+            wet = settings["wet"]
             self._apply_effect(f"Room reverb at {wet:g} percent", lambda data, doc: audio_effects.reverb(data, doc.sample_width, doc.channels, doc.frame_rate, wet / 100))
 
     def flanger_audio(self) -> None:
-        rate = simpledialog.askfloat("Flanger rate", "Modulation rate in Hertz:", parent=self, initialvalue=.25, minvalue=.01, maxvalue=20)
-        if rate is None: return
-        depth = simpledialog.askfloat("Flanger depth", "Delay depth in milliseconds:", parent=self, initialvalue=3, minvalue=.1, maxvalue=30)
-        if depth is None: return
-        wet = simpledialog.askfloat("Flanger mix", "Wet mix percentage:", parent=self, initialvalue=55, minvalue=0, maxvalue=100)
-        if wet is not None:
+        settings = self.effect_parameters("Flanger", [
+            ("rate", "Modulation rate in Hertz, 0.01 through 20", .25, .01, 20),
+            ("depth", "Delay depth in milliseconds, 0.1 through 30", 3, .1, 30),
+            ("wet", "Wet mix percentage, 0 through 100", 55, 0, 100),
+        ])
+        if settings:
+            rate, depth, wet = settings["rate"], settings["depth"], settings["wet"]
             self._apply_effect("Flanger", lambda data, doc: audio_effects.flanger(data, doc.sample_width, doc.channels, doc.frame_rate, rate, depth, wet / 100))
 
     def chorus_audio(self) -> None:
-        wet = simpledialog.askfloat("Chorus", "Wet mix percentage:", parent=self, initialvalue=45, minvalue=0, maxvalue=100)
-        if wet is not None:
+        settings = self.effect_parameters("Chorus", [("wet", "Wet mix percentage, 0 through 100", 45, 0, 100)])
+        if settings:
+            wet = settings["wet"]
             self._apply_effect(f"Chorus at {wet:g} percent", lambda data, doc: audio_effects.chorus(data, doc.sample_width, doc.channels, doc.frame_rate, wet / 100))
 
     def noise_gate_audio(self) -> None:
-        threshold = simpledialog.askfloat("Noise gate", "Threshold in dB:", parent=self, initialvalue=-40.0, minvalue=-96.0, maxvalue=0.0)
-        if threshold is None: return
-        attack = simpledialog.askfloat("Noise gate attack", "Attack in milliseconds:", parent=self, initialvalue=5, minvalue=0, maxvalue=1000)
-        if attack is None: return
-        release = simpledialog.askfloat("Noise gate release", "Release in milliseconds:", parent=self, initialvalue=80, minvalue=0, maxvalue=5000)
-        if release is not None:
+        settings = self.effect_parameters("Noise Gate", [
+            ("threshold", "Threshold in decibels, minus 96 through 0", -40, -96, 0),
+            ("attack", "Attack in milliseconds, 0 through 1000", 5, 0, 1000),
+            ("release", "Release in milliseconds, 0 through 5000", 80, 0, 5000),
+        ])
+        if settings:
+            threshold, attack, release = settings["threshold"], settings["attack"], settings["release"]
             self._apply_effect(f"Noise gate at {threshold:g} dB", lambda data, doc: audio_effects.noise_gate(data, doc.sample_width, doc.channels, doc.frame_rate, threshold, attack, release))
 
     def noise_reduction_audio(self) -> None:
-        strength = simpledialog.askfloat("Noise reduction", "Reduction strength, 0 to 100 percent:", parent=self, initialvalue=65.0, minvalue=0.0, maxvalue=100.0)
-        if strength is not None:
+        settings = self.effect_parameters("Noise Reduction", [("strength", "Reduction strength percentage, 0 through 100", 65, 0, 100)])
+        if settings:
+            strength = settings["strength"]
             self._apply_effect(f"Noise reduction at {strength:g} percent", lambda data, doc: audio_effects.noise_reduce(data, doc.sample_width, doc.channels, doc.frame_rate, strength / 100))
 
     def lowpass_audio(self) -> None:
-        cutoff = simpledialog.askfloat("Low-pass filter", "Cutoff frequency in Hz:", parent=self, initialvalue=8000.0, minvalue=1.0)
-        if cutoff is not None:
+        settings = self.effect_parameters("Low-Pass Filter", [("cutoff", "Cutoff frequency in Hertz, at least 1", 8000, 1, None)])
+        if settings:
+            cutoff = settings["cutoff"]
             self._apply_effect(f"Low-pass filter at {cutoff:g} Hz", lambda data, doc: audio_effects.lowpass(data, doc.sample_width, doc.channels, doc.frame_rate, cutoff))
 
     def highpass_audio(self) -> None:
-        cutoff = simpledialog.askfloat("High-pass filter", "Cutoff frequency in Hz:", parent=self, initialvalue=80.0, minvalue=1.0)
-        if cutoff is not None:
+        settings = self.effect_parameters("High-Pass Filter", [("cutoff", "Cutoff frequency in Hertz, at least 1", 80, 1, None)])
+        if settings:
+            cutoff = settings["cutoff"]
             self._apply_effect(f"High-pass filter at {cutoff:g} Hz", lambda data, doc: audio_effects.highpass(data, doc.sample_width, doc.channels, doc.frame_rate, cutoff))
 
     def compressor_audio(self) -> None:
-        threshold = simpledialog.askfloat("Compressor threshold", "Threshold in dB:", parent=self, initialvalue=-18.0, minvalue=-60.0, maxvalue=0.0)
-        if threshold is None:
-            return
-        ratio = simpledialog.askfloat("Compressor ratio", "Compression ratio, for example 4 for 4 to 1:", parent=self, initialvalue=4.0, minvalue=1.0, maxvalue=100.0)
-        if ratio is None: return
-        attack = simpledialog.askfloat("Compressor attack", "Attack in milliseconds:", parent=self, initialvalue=10, minvalue=.1, maxvalue=1000)
-        if attack is None: return
-        release = simpledialog.askfloat("Compressor release", "Release in milliseconds:", parent=self, initialvalue=100, minvalue=1, maxvalue=5000)
-        if release is not None:
+        settings = self.effect_parameters("Compressor", [
+            ("threshold", "Threshold in decibels, minus 60 through 0", -18, -60, 0),
+            ("ratio", "Compression ratio, 1 through 100; for example 4 means 4 to 1", 4, 1, 100),
+            ("attack", "Attack in milliseconds, 0.1 through 1000", 10, .1, 1000),
+            ("release", "Release in milliseconds, 1 through 5000", 100, 1, 5000),
+        ])
+        if settings:
+            threshold, ratio = settings["threshold"], settings["ratio"]
+            attack, release = settings["attack"], settings["release"]
             self._apply_effect(f"Compressor at {threshold:g} dB, {ratio:g} to 1", lambda data, doc: audio_effects.compressor(data, doc.sample_width, doc.channels, doc.frame_rate, threshold, ratio, attack, release))
 
     def bass_treble_audio(self) -> None:
-        bass = simpledialog.askfloat("Bass", "Bass gain in decibels:", parent=self, initialvalue=0, minvalue=-24, maxvalue=24)
-        if bass is None: return
-        treble = simpledialog.askfloat("Treble", "Treble gain in decibels:", parent=self, initialvalue=0, minvalue=-24, maxvalue=24)
-        if treble is not None:
+        settings = self.effect_parameters("Bass and Treble", [
+            ("bass", "Bass gain in decibels, minus 24 through plus 24", 0, -24, 24),
+            ("treble", "Treble gain in decibels, minus 24 through plus 24", 0, -24, 24),
+        ])
+        if settings:
+            bass, treble = settings["bass"], settings["treble"]
             self._apply_ffmpeg_effect("Bass and treble", f"bass=g={bass:g},treble=g={treble:g}")
 
     def tremolo_audio(self) -> None:
-        rate = simpledialog.askfloat("Tremolo rate", "Rate in Hertz:", parent=self, initialvalue=5, minvalue=.1, maxvalue=100)
-        if rate is None: return
-        depth = simpledialog.askfloat("Tremolo depth", "Depth from 0 to 100 percent:", parent=self, initialvalue=50, minvalue=0, maxvalue=100)
-        if depth is not None:
+        settings = self.effect_parameters("Tremolo", [
+            ("rate", "Rate in Hertz, 0.1 through 100", 5, .1, 100),
+            ("depth", "Depth percentage, 0 through 100", 50, 0, 100),
+        ])
+        if settings:
+            rate, depth = settings["rate"], settings["depth"]
             self._apply_ffmpeg_effect("Tremolo", f"tremolo=f={rate:g}:d={depth / 100:g}")
 
     def distortion_audio(self) -> None:
-        amount = simpledialog.askfloat("Distortion", "Drive from 1 to 100 percent:", parent=self, initialvalue=25, minvalue=1, maxvalue=100)
-        if amount is not None:
+        settings = self.effect_parameters("Distortion", [("amount", "Drive percentage, 1 through 100", 25, 1, 100)])
+        if settings:
+            amount = settings["amount"]
             drive = 1 + amount / 8
             self._apply_ffmpeg_effect("Distortion", f"volume={drive:g},alimiter=limit=0.95:level=false")
 
@@ -2160,20 +2213,23 @@ class QuickEdit(tk.Tk):
                 if os.path.isfile(path): os.remove(path)
 
     def change_speed(self) -> None:
-        value = simpledialog.askfloat("Change speed", "New speed percentage:", parent=self, initialvalue=100, minvalue=10, maxvalue=800)
-        if value is not None:
+        settings = self.effect_parameters("Change Speed", [("value", "New speed percentage, 10 through 800", 100, 10, 800)])
+        if settings:
+            value = settings["value"]
             self._apply_ffmpeg_effect(f"Speed changed to {value:g} percent with pitch preserved", self.media.tempo_filter(value / 100))
 
     def change_pitch(self) -> None:
-        value = simpledialog.askfloat("Change pitch", "Semitones, negative for lower pitch:", parent=self, initialvalue=0, minvalue=-24, maxvalue=24)
-        if value is not None and self.document:
+        settings = self.effect_parameters("Change Pitch", [("value", "Pitch change in semitones, minus 24 through plus 24", 0, -24, 24)])
+        if settings and self.document:
+            value = settings["value"]
             factor = 2 ** (value / 12)
             filt = f"asetrate={self.document.frame_rate}*{factor:.8g},aresample={self.document.frame_rate},{self.media.tempo_filter(1/factor)}"
             self._apply_ffmpeg_effect(f"Pitch changed by {value:g} semitones with speed preserved", filt)
 
     def change_tape_speed(self) -> None:
-        value = simpledialog.askfloat("Tape pitch and speed", "Semitones, negative makes it lower and slower:", parent=self, initialvalue=0, minvalue=-24, maxvalue=24)
-        if value is not None and self.document:
+        settings = self.effect_parameters("Tape Pitch and Speed", [("value", "Semitones; negative is lower and slower, minus 24 through plus 24", 0, -24, 24)])
+        if settings and self.document:
+            value = settings["value"]
             factor = 2 ** (value / 12)
             self._apply_ffmpeg_effect(f"Tape pitch and speed changed by {value:g} semitones", f"asetrate={self.document.frame_rate}*{factor:.8g},aresample={self.document.frame_rate}")
 
