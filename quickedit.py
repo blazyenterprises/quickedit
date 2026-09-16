@@ -2222,6 +2222,21 @@ class QuickEdit(tk.Tk):
         self.refresh_details()
         self.announce(f"Generated {title}.")
 
+    def _preview_generated_audio(
+        self, frames: bytes, rate: int, width: int, channels: int, label: str
+    ) -> None:
+        self.stop_effect_preview()
+        handle, path = tempfile.mkstemp(prefix="quickedit-generator-preview-", suffix=".wav")
+        os.close(handle)
+        self.effect_preview_files.add(path)
+        with wave.open(path, "wb") as target:
+            target.setnchannels(channels)
+            target.setsampwidth(width)
+            target.setframerate(rate)
+            target.writeframes(frames)
+        self.preview_process = self.media.start_playback(path, self.output_device)
+        self.announce(f"Playing {label} preview, up to 10 seconds.")
+
     def generate_tone(self) -> None:
         dialog = tk.Toplevel(self); dialog.title("Tone or Noise Generator"); dialog.transient(self); dialog.grab_set()
         result: list[tuple[str, float, float, float]] = []
@@ -2243,20 +2258,39 @@ class QuickEdit(tk.Tk):
             entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
             variables.append(variable); entries.append(entry)
         buttons = tk.Frame(dialog); buttons.grid(row=8, column=0, sticky="ew", padx=12, pady=12)
-        def accept(event=None) -> str:
+        def settings() -> tuple[str, float, float, float] | None:
             try: frequency, duration, level = (float(item.get().strip()) for item in variables)
             except ValueError:
-                self.screen_reader.speak("Frequency, duration, and level must be numbers."); return "break"
-            if not 1 <= frequency <= 192000: self.screen_reader.speak("Frequency must be from 1 through 192000 Hertz."); entries[0].focus_set(); return "break"
-            if not .01 <= duration <= 3600: self.screen_reader.speak("Duration must be from point 01 through 3600 seconds."); entries[1].focus_set(); return "break"
-            if not -60 <= level <= 0: self.screen_reader.speak("Level must be from minus 60 through 0 dBFS."); entries[2].focus_set(); return "break"
+                self.screen_reader.speak("Frequency, duration, and level must be numbers."); return None
+            if not 1 <= frequency <= 192000: self.screen_reader.speak("Frequency must be from 1 through 192000 Hertz."); entries[0].focus_set(); return None
+            if not .01 <= duration <= 3600: self.screen_reader.speak("Duration must be from point 01 through 3600 seconds."); entries[1].focus_set(); return None
+            if not -60 <= level <= 0: self.screen_reader.speak("Level must be from minus 60 through 0 dBFS."); entries[2].focus_set(); return None
             selected = waveform_list.curselection(); kind = waveforms[selected[0]] if selected else "sine"
-            result.append((kind, frequency, duration, level)); dialog.destroy(); return "break"
-        def cancel(event=None) -> str: dialog.destroy(); return "break"
+            return kind, frequency, duration, level
+        def preview(event=None) -> str:
+            chosen = settings()
+            if chosen:
+                kind, frequency, duration, level = chosen
+                preview_duration = min(duration, 10)
+                document = self.document
+                rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
+                try:
+                    frames = signal_generator.generate_waveform(kind, frequency, preview_duration, rate, width, channels, level)
+                    self._preview_generated_audio(frames, rate, width, channels, f"{kind} tone")
+                except (OSError, ValueError, MediaError) as exc:
+                    messagebox.showerror("Could not preview tone", str(exc), parent=dialog)
+            return "break"
+        def accept(event=None) -> str:
+            chosen = settings()
+            if chosen:
+                self.stop_effect_preview(); result.append(chosen); dialog.destroy()
+            return "break"
+        def cancel(event=None) -> str: self.stop_effect_preview(); dialog.destroy(); return "break"
         waveform_list.bind("<FocusIn>", lambda event: self.screen_reader.speak("Waveform list. Use up and down arrows."))
         waveform_list.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(f"{waveform_list.get(waveform_list.curselection()[0])} waveform") if waveform_list.curselection() else None)
         for entry in entries: entry.bind("<Return>", accept)
-        self.accessible_button(buttons, "Generate Tone", accept).pack(side="left")
+        self.accessible_button(buttons, "Preview Tone", preview).pack(side="left")
+        self.accessible_button(buttons, "Generate Tone", accept).pack(side="left", padx=8)
         self.accessible_button(buttons, "Cancel Tone Generator", cancel).pack(side="right")
         dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel); dialog.columnconfigure(0, weight=1)
         waveform_list.focus_set(); self.wait_window(dialog)
@@ -2278,18 +2312,37 @@ class QuickEdit(tk.Tk):
         tk.Label(dialog, text="Symbols per second; point 5 through 50").grid(row=2, column=0, sticky="w", padx=12, pady=(8, 2))
         speed_entry = ttk.Entry(dialog, textvariable=speed_var, takefocus=True); speed_entry.grid(row=3, column=0, sticky="ew", padx=12)
         buttons = tk.Frame(dialog); buttons.grid(row=4, column=0, sticky="ew", padx=12, pady=12)
-        def accept(event=None) -> str:
+        def settings() -> tuple[str, float] | None:
             digits = digits_var.get().strip()
-            if not digits: self.screen_reader.speak("Key sequence cannot be blank."); digits_entry.focus_set(); return "break"
+            if not digits: self.screen_reader.speak("Key sequence cannot be blank."); digits_entry.focus_set(); return None
             try: speed = float(speed_var.get().strip())
-            except ValueError: self.screen_reader.speak("Symbols per second must be a number."); speed_entry.focus_set(); return "break"
-            if not .5 <= speed <= 50: self.screen_reader.speak("Symbols per second must be from point 5 through 50."); speed_entry.focus_set(); return "break"
-            result.append((digits, speed)); dialog.destroy(); return "break"
-        def cancel(event=None) -> str: dialog.destroy(); return "break"
+            except ValueError: self.screen_reader.speak("Symbols per second must be a number."); speed_entry.focus_set(); return None
+            if not .5 <= speed <= 50: self.screen_reader.speak("Symbols per second must be from point 5 through 50."); speed_entry.focus_set(); return None
+            return digits, speed
+        def preview(event=None) -> str:
+            chosen = settings()
+            if chosen:
+                digits, speed = chosen
+                document = self.document
+                rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
+                try:
+                    frames = signal_generator.generate_phone_keys(kind, digits, speed, rate, width, channels)
+                    max_bytes = rate * width * channels * 10
+                    self._preview_generated_audio(frames[:max_bytes], rate, width, channels, f"{kind} telephone tones")
+                except (OSError, ValueError, MediaError) as exc:
+                    messagebox.showerror(f"Could not preview {kind}", str(exc), parent=dialog)
+            return "break"
+        def accept(event=None) -> str:
+            chosen = settings()
+            if chosen:
+                self.stop_effect_preview(); result.append(chosen); dialog.destroy()
+            return "break"
+        def cancel(event=None) -> str: self.stop_effect_preview(); dialog.destroy(); return "break"
         digits_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{kind} key sequence, edit."))
         speed_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("Symbols per second, edit."))
         digits_entry.bind("<Return>", accept); speed_entry.bind("<Return>", accept)
-        self.accessible_button(buttons, f"Generate {kind} Tones", accept).pack(side="left")
+        self.accessible_button(buttons, f"Preview {kind} Tones", preview).pack(side="left")
+        self.accessible_button(buttons, f"Generate {kind} Tones", accept).pack(side="left", padx=8)
         self.accessible_button(buttons, f"Cancel {kind} Generator", cancel).pack(side="right")
         dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel); dialog.columnconfigure(0, weight=1)
         digits_entry.focus_set(); self.wait_window(dialog)
