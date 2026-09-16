@@ -222,6 +222,7 @@ class QuickEdit(tk.Tk):
         self.temp_play_path: str | None = None
         self.play_process = None
         self.preview_process = None
+        self.effect_preview_files: set[str] = set()
         self.record_process = None
         self.record_path: str | None = None
         self.record_append = False
@@ -1988,10 +1989,54 @@ class QuickEdit(tk.Tk):
             parsed[key] = value
         return parsed
 
-    def _preview_effect_settings(self, title: str, s: dict[str, float]) -> None:
+    def _effect_preview_source(self) -> tuple[AudioDocument, bytes] | None:
+        """Return at most ten seconds, starting at the selection or cursor."""
         target = self._effect_range()
-        if not target: return
-        doc, start, end = target; data = doc.slice_bytes(start, end)
+        if not target:
+            return None
+        doc, start, end = target
+        if not doc.selection():
+            start = min(doc.cursor_frame, end - 1)
+        end = min(end, start + doc.frame_rate * 10)
+        return doc, doc.slice_bytes(start, end)
+
+    def stop_effect_preview(self) -> None:
+        if self.preview_process and self.preview_process.poll() is None:
+            self.preview_process.terminate()
+            try:
+                self.preview_process.wait(timeout=1)
+            except Exception:
+                pass
+        self.preview_process = None
+        for path in self.effect_preview_files:
+            self._remove_preview_file(path)
+        self.effect_preview_files.clear()
+
+    def _play_effect_preview(self, title: str, data: bytes, doc: AudioDocument, affected: bool) -> None:
+        self.stop_effect_preview()
+        handle, path = tempfile.mkstemp(prefix="quickedit-effect-preview-", suffix=".wav")
+        os.close(handle)
+        self.effect_preview_files.add(path)
+        self._write_wav(path, data)
+        self.preview_process = self.media.start_playback(path, self.output_device)
+        kind = "effect" if affected else "original"
+        self.announce(f"Playing {kind} preview for {title}, up to 10 seconds.")
+
+    def _preview_effect_original(self, title: str) -> None:
+        source = self._effect_preview_source()
+        if not source:
+            return
+        doc, data = source
+        try:
+            self._play_effect_preview(title, data, doc, affected=False)
+        except (OSError, ValueError, MediaError) as exc:
+            messagebox.showerror(f"{title} preview failed", str(exc), parent=self)
+
+    def _preview_effect_settings(self, title: str, s: dict[str, float]) -> None:
+        source_data = self._effect_preview_source()
+        if not source_data:
+            return
+        doc, data = source_data
         pcm = {
             "Amplify or Reduce Volume": lambda: audio_effects.amplify_db(data, doc.sample_width, s["db"]),
             "Echo": lambda: audio_effects.echo(data, doc.sample_width, doc.channels, doc.frame_rate, s["delay"], s["feedback"] / 100, s["wet"] / 100),
@@ -2012,26 +2057,28 @@ class QuickEdit(tk.Tk):
             "Change Pitch": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate},{self.media.tempo_filter(1/(2**(s['value']/12)))}",
             "Tape Pitch and Speed": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate}",
         }
-        h, source = tempfile.mkstemp(prefix="quickedit-preview-", suffix=".wav"); os.close(h)
+        self.stop_effect_preview()
+        self.announce(f"Preparing {title} effect preview, up to 10 seconds.")
+        self.update_idletasks()
+        handle, source = tempfile.mkstemp(prefix="quickedit-preview-source-", suffix=".wav"); os.close(handle)
+        self.effect_preview_files.add(source)
         rendered = source
         try:
             if title in pcm:
-                self._write_wav(source, pcm[title]())
+                rendered_data = pcm[title]()
+                self._play_effect_preview(title, rendered_data, doc, affected=True)
+                return
             elif title in filters:
                 self._write_wav(source, data)
-                h, rendered = tempfile.mkstemp(prefix="quickedit-preview-result-", suffix=".wav"); os.close(h)
+                handle, rendered = tempfile.mkstemp(prefix="quickedit-preview-result-", suffix=".wav"); os.close(handle)
+                self.effect_preview_files.add(rendered)
                 self.media.transform_wav(source, rendered, filters[title](), doc.sample_width)
             else: return
-            if self.preview_process and self.preview_process.poll() is None: self.preview_process.terminate()
             self.preview_process = self.media.start_playback(rendered, self.output_device)
-            self.announce(f"Previewing {title}.")
+            self.announce(f"Playing effect preview for {title}, up to 10 seconds.")
         except (OSError, ValueError, MediaError) as exc:
+            self.stop_effect_preview()
             messagebox.showerror(f"{title} preview failed", str(exc), parent=self)
-        finally:
-            # mpv opens the file immediately on Windows; delayed cleanup also
-            # avoids removing it before the player has acquired its handle.
-            for path in {source, rendered}:
-                self.after(5000, lambda item=path: self._remove_preview_file(item))
 
     @staticmethod
     def _remove_preview_file(path: str) -> None:
@@ -2092,6 +2139,7 @@ class QuickEdit(tk.Tk):
                     entries[key].focus_set()
                     return "break"
                 parsed[key] = value
+            self.stop_effect_preview()
             result.append(parsed)
             dialog.destroy()
             return "break"
@@ -2109,6 +2157,15 @@ class QuickEdit(tk.Tk):
             if parsed is not None: self._preview_effect_settings(title, parsed)
             return "break"
 
+        def preview_original(event=None) -> str:
+            self._preview_effect_original(title)
+            return "break"
+
+        def close_dialog(event=None) -> str:
+            self.stop_effect_preview()
+            dialog.destroy()
+            return "break"
+
         def add_preset() -> None:
             parsed = self._parse_effect_values(fields, values, entries)
             if parsed is None: return
@@ -2122,13 +2179,16 @@ class QuickEdit(tk.Tk):
 
         preset_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{title} effect presets list."))
         preset_list.bind("<<ListboxSelect>>", choose_preset)
-        self.accessible_button(buttons, f"Preview {title}", preview).pack(side="left")
+        self.accessible_button(buttons, "Preview Original", preview_original).pack(side="left")
+        self.accessible_button(buttons, f"Preview {title} Effect", preview).pack(side="left", padx=6)
         self.accessible_button(buttons, f"Apply {title}", apply).pack(side="left", padx=6)
         self.accessible_button(buttons, "Add Preset", add_preset).pack(side="left")
-        self.accessible_button(buttons, f"Cancel {title}", dialog.destroy).pack(side="right")
+        self.accessible_button(buttons, f"Cancel {title}", close_dialog).pack(side="right")
         for entry in entries.values():
             entry.bind("<Return>", apply)
         dialog.columnconfigure(0, weight=1)
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
+        dialog.bind("<Escape>", close_dialog)
         next(iter(entries.values())).focus_set()
         self.wait_window(dialog)
         return result[0] if result else None
@@ -3136,6 +3196,7 @@ class QuickEdit(tk.Tk):
             self.announce("Playback stopped.")
 
     def destroy(self) -> None:
+        self.stop_effect_preview()
         self.stop(announce=False)
         super().destroy()
 
