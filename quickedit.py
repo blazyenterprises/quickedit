@@ -2223,18 +2223,45 @@ class QuickEdit(tk.Tk):
         self.announce(f"Generated {title}.")
 
     def generate_tone(self) -> None:
-        kind = simpledialog.askstring("Tone or noise", "Waveform: sine, square, triangle, sawtooth, white noise, or pink noise:", parent=self, initialvalue="sine")
-        if not kind:
-            return
-        frequency = simpledialog.askfloat("Frequency", "Frequency in Hertz (ignored for noise):", parent=self, initialvalue=440, minvalue=1, maxvalue=192000)
-        if frequency is None:
-            return
-        duration = simpledialog.askfloat("Duration", "Duration in seconds:", parent=self, initialvalue=1, minvalue=.01, maxvalue=3600)
-        if duration is None:
-            return
-        level = simpledialog.askfloat("Level", "Level in dBFS, from -60 to 0:", parent=self, initialvalue=-12, minvalue=-60, maxvalue=0)
-        if level is None:
-            return
+        dialog = tk.Toplevel(self); dialog.title("Tone or Noise Generator"); dialog.transient(self); dialog.grab_set()
+        result: list[tuple[str, float, float, float]] = []
+        waveforms = ("sine", "square", "triangle", "sawtooth", "white noise", "pink noise")
+        tk.Label(dialog, text="Waveform").grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
+        waveform_list = tk.Listbox(dialog, exportselection=False, height=6, takefocus=True)
+        for item in waveforms: waveform_list.insert("end", item)
+        waveform_list.selection_set(0); waveform_list.activate(0); waveform_list.grid(row=1, column=0, sticky="ew", padx=12)
+        field_specs = (
+            ("Frequency in Hertz; ignored for noise", "440"),
+            ("Duration in seconds", "1"),
+            ("Level in dBFS; minus 60 through 0", "-12"),
+        )
+        variables: list[tk.StringVar] = []; entries: list[ttk.Entry] = []
+        for offset, (label, default) in enumerate(field_specs, 2):
+            tk.Label(dialog, text=label).grid(row=offset * 2 - 2, column=0, sticky="w", padx=12, pady=(6, 2))
+            variable = tk.StringVar(value=default); entry = ttk.Entry(dialog, textvariable=variable, takefocus=True)
+            entry.grid(row=offset * 2 - 1, column=0, sticky="ew", padx=12)
+            entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+            variables.append(variable); entries.append(entry)
+        buttons = tk.Frame(dialog); buttons.grid(row=8, column=0, sticky="ew", padx=12, pady=12)
+        def accept(event=None) -> str:
+            try: frequency, duration, level = (float(item.get().strip()) for item in variables)
+            except ValueError:
+                self.screen_reader.speak("Frequency, duration, and level must be numbers."); return "break"
+            if not 1 <= frequency <= 192000: self.screen_reader.speak("Frequency must be from 1 through 192000 Hertz."); entries[0].focus_set(); return "break"
+            if not .01 <= duration <= 3600: self.screen_reader.speak("Duration must be from point 01 through 3600 seconds."); entries[1].focus_set(); return "break"
+            if not -60 <= level <= 0: self.screen_reader.speak("Level must be from minus 60 through 0 dBFS."); entries[2].focus_set(); return "break"
+            selected = waveform_list.curselection(); kind = waveforms[selected[0]] if selected else "sine"
+            result.append((kind, frequency, duration, level)); dialog.destroy(); return "break"
+        def cancel(event=None) -> str: dialog.destroy(); return "break"
+        waveform_list.bind("<FocusIn>", lambda event: self.screen_reader.speak("Waveform list. Use up and down arrows."))
+        waveform_list.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(f"{waveform_list.get(waveform_list.curselection()[0])} waveform") if waveform_list.curselection() else None)
+        for entry in entries: entry.bind("<Return>", accept)
+        self.accessible_button(buttons, "Generate Tone", accept).pack(side="left")
+        self.accessible_button(buttons, "Cancel Tone Generator", cancel).pack(side="right")
+        dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel); dialog.columnconfigure(0, weight=1)
+        waveform_list.focus_set(); self.wait_window(dialog)
+        if not result: return
+        kind, frequency, duration, level = result[0]
         document = self.document
         rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
         try:
@@ -2244,12 +2271,30 @@ class QuickEdit(tk.Tk):
             messagebox.showerror("Could not generate tone", str(exc), parent=self)
 
     def generate_phone_keys(self, kind: str) -> None:
-        digits = simpledialog.askstring(f"{kind} telephone keys", "Key sequence:", parent=self)
-        if not digits:
-            return
-        speed = simpledialog.askfloat("Dialing speed", "Symbols per second:", parent=self, initialvalue=8, minvalue=.5, maxvalue=50)
-        if speed is None:
-            return
+        dialog = tk.Toplevel(self); dialog.title(f"{kind} Telephone Tone Generator"); dialog.transient(self); dialog.grab_set()
+        result: list[tuple[str, float]] = []; digits_var = tk.StringVar(); speed_var = tk.StringVar(value="8")
+        tk.Label(dialog, text=f"{kind} key sequence").grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
+        digits_entry = ttk.Entry(dialog, textvariable=digits_var, takefocus=True); digits_entry.grid(row=1, column=0, sticky="ew", padx=12)
+        tk.Label(dialog, text="Symbols per second; point 5 through 50").grid(row=2, column=0, sticky="w", padx=12, pady=(8, 2))
+        speed_entry = ttk.Entry(dialog, textvariable=speed_var, takefocus=True); speed_entry.grid(row=3, column=0, sticky="ew", padx=12)
+        buttons = tk.Frame(dialog); buttons.grid(row=4, column=0, sticky="ew", padx=12, pady=12)
+        def accept(event=None) -> str:
+            digits = digits_var.get().strip()
+            if not digits: self.screen_reader.speak("Key sequence cannot be blank."); digits_entry.focus_set(); return "break"
+            try: speed = float(speed_var.get().strip())
+            except ValueError: self.screen_reader.speak("Symbols per second must be a number."); speed_entry.focus_set(); return "break"
+            if not .5 <= speed <= 50: self.screen_reader.speak("Symbols per second must be from point 5 through 50."); speed_entry.focus_set(); return "break"
+            result.append((digits, speed)); dialog.destroy(); return "break"
+        def cancel(event=None) -> str: dialog.destroy(); return "break"
+        digits_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{kind} key sequence, edit."))
+        speed_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("Symbols per second, edit."))
+        digits_entry.bind("<Return>", accept); speed_entry.bind("<Return>", accept)
+        self.accessible_button(buttons, f"Generate {kind} Tones", accept).pack(side="left")
+        self.accessible_button(buttons, f"Cancel {kind} Generator", cancel).pack(side="right")
+        dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel); dialog.columnconfigure(0, weight=1)
+        digits_entry.focus_set(); self.wait_window(dialog)
+        if not result: return
+        digits, speed = result[0]
         document = self.document
         rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
         try:
@@ -2263,10 +2308,26 @@ class QuickEdit(tk.Tk):
         if not document or not document.selection():
             self.announce("Set both brackets around the word or audio to censor.")
             return
-        method = simpledialog.askstring("Censor selection", "Method: beep, buzz, reverse, silence, or remove:", parent=self, initialvalue="beep")
-        if not method:
-            return
-        method = method.strip().lower()
+        dialog = tk.Toplevel(self); dialog.title("Censor Selection"); dialog.transient(self); dialog.grab_set()
+        methods = ("beep", "buzz", "reverse", "silence", "remove"); result: list[str] = []
+        tk.Label(dialog, text="Censor method").pack(anchor="w", padx=12, pady=(12, 2))
+        choices = tk.Listbox(dialog, exportselection=False, height=5, takefocus=True)
+        for item in methods: choices.insert("end", item)
+        choices.selection_set(0); choices.activate(0); choices.pack(fill="x", padx=12)
+        buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
+        def accept(event=None) -> str:
+            selected = choices.curselection()
+            if selected: result.append(methods[selected[0]])
+            dialog.destroy(); return "break"
+        def cancel(event=None) -> str: dialog.destroy(); return "break"
+        choices.bind("<FocusIn>", lambda event: self.screen_reader.speak("Censor method list. Use up and down arrows."))
+        choices.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(f"{choices.get(choices.curselection()[0])} censor method") if choices.curselection() else None)
+        choices.bind("<Return>", accept)
+        self.accessible_button(buttons, "Apply Censor", accept).pack(side="left")
+        self.accessible_button(buttons, "Cancel Censor", cancel).pack(side="right")
+        dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel); choices.focus_set(); self.wait_window(dialog)
+        if not result: return
+        method = result[0]
         start, end = document.selection()
         duration = document.seconds_at(end - start)
         if method in {"beep", "buzz"}:
