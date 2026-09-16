@@ -208,6 +208,19 @@ class EffectPresetTests(unittest.TestCase):
         crackle = QuickEdit._vinyl_crackle_filter({"density": 50, "level": -20})
         self.assertIn("random", crackle)
 
+    def test_advanced_filter_recipes(self):
+        expander = QuickEdit._expander_filter({"threshold": -40, "ratio": 3, "attack": 8, "release": 180})
+        self.assertIn("agate=", expander)
+        limiter = QuickEdit._limiter_filter({"ceiling": -1, "attack": 5, "release": 80})
+        self.assertIn("alimiter=", limiter)
+        graphic = QuickEdit._graphic_eq_filter({"b60": 1, "b250": 2, "b1000": 3, "b4000": 4, "b12000": 5})
+        self.assertEqual(graphic.count("equalizer="), 5)
+        for effect in (
+            "Expander", "Limiter", "Band-Pass Filter", "Notch Filter",
+            "Graphic Equalizer", "Parametric Equalizer", "De-Esser",
+        ):
+            self.assertIn(effect, QuickEdit.BUILTIN_EFFECT_PRESETS)
+
 
 if __name__ == "__main__":
     unittest.main()

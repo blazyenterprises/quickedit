@@ -191,6 +191,13 @@ class QuickEdit(tk.Tk):
         "Low-Pass Filter": {"Air Trim": {"cutoff": 18000}, "Gentle Warmth": {"cutoff": 14000}, "Warm": {"cutoff": 10000}, "Dark": {"cutoff": 7000}, "Old Radio": {"cutoff": 4500}, "Telephone High Cut": {"cutoff": 3400}, "Muffled": {"cutoff": 2200}, "Behind a Wall": {"cutoff": 1200}, "Deep Underwater": {"cutoff": 600}, "Sub Bass Only": {"cutoff": 180}},
         "High-Pass Filter": {"Remove Rumble": {"cutoff": 30}, "Voice Rumble Cut": {"cutoff": 70}, "Podcast": {"cutoff": 90}, "Thin Mix": {"cutoff": 180}, "Small Speaker": {"cutoff": 350}, "Telephone Low Cut": {"cutoff": 500}, "Tinny": {"cutoff": 1000}, "No Bass": {"cutoff": 2000}, "Treble Only": {"cutoff": 5000}, "Extreme": {"cutoff": 10000}},
         "Compressor": {"Transparent": {"threshold": -10, "ratio": 1.5, "attack": 30, "release": 250}, "Gentle": {"threshold": -14, "ratio": 2, "attack": 20, "release": 180}, "Vocal Smooth": {"threshold": -18, "ratio": 3, "attack": 12, "release": 160}, "Voice Leveler": {"threshold": -22, "ratio": 4, "attack": 8, "release": 120}, "Podcast Firm": {"threshold": -24, "ratio": 5, "attack": 5, "release": 100}, "Drum Punch": {"threshold": -12, "ratio": 6, "attack": 25, "release": 80}, "Bass Control": {"threshold": -18, "ratio": 7, "attack": 10, "release": 140}, "Broadcast": {"threshold": -28, "ratio": 8, "attack": 3, "release": 80}, "Heavy": {"threshold": -32, "ratio": 12, "attack": 2, "release": 60}, "Brick Wall": {"threshold": -36, "ratio": 100, "attack": .1, "release": 40}},
+        "Expander": {"Gentle Cleanup": {"threshold": -50, "ratio": 1.5, "attack": 15, "release": 250}, "Voice Room Tone": {"threshold": -45, "ratio": 2, "attack": 10, "release": 220}, "Podcast": {"threshold": -40, "ratio": 2.5, "attack": 8, "release": 180}, "Music Gentle": {"threshold": -48, "ratio": 1.8, "attack": 25, "release": 350}, "Drum Separation": {"threshold": -32, "ratio": 4, "attack": 2, "release": 100}, "Cassette Cleanup": {"threshold": -42, "ratio": 3, "attack": 12, "release": 280}, "Strong": {"threshold": -36, "ratio": 6, "attack": 5, "release": 140}, "Very Strong": {"threshold": -30, "ratio": 10, "attack": 2, "release": 80}, "Choppy": {"threshold": -24, "ratio": 15, "attack": 1, "release": 40}, "Extreme": {"threshold": -18, "ratio": 20, "attack": .1, "release": 15}},
+        "Limiter": {"Safety Ceiling": {"ceiling": -1, "attack": 5, "release": 80}, "Streaming Safe": {"ceiling": -1.5, "attack": 8, "release": 120}, "Transparent": {"ceiling": -.3, "attack": 20, "release": 250}, "Vocal Peak Catcher": {"ceiling": -2, "attack": 3, "release": 100}, "Podcast": {"ceiling": -1, "attack": 10, "release": 180}, "Drum Peaks": {"ceiling": -.5, "attack": 1, "release": 50}, "Firm": {"ceiling": -3, "attack": 5, "release": 100}, "Loud": {"ceiling": -6, "attack": 2, "release": 60}, "Crushed": {"ceiling": -10, "attack": 1, "release": 30}, "Brick Wall": {"ceiling": -12, "attack": .1, "release": 10}},
+        "Band-Pass Filter": {"Full Midrange": {"frequency": 1500, "q": .5}, "Wide Voice": {"frequency": 1800, "q": .8}, "Telephone": {"frequency": 1700, "q": 1.2}, "AM Radio": {"frequency": 2200, "q": 1}, "Megaphone": {"frequency": 1200, "q": 2}, "Nasal": {"frequency": 900, "q": 4}, "Presence": {"frequency": 3500, "q": 3}, "Bass Focus": {"frequency": 180, "q": 2}, "Treble Whistle": {"frequency": 8000, "q": 6}, "Extreme Narrow": {"frequency": 1000, "q": 15}},
+        "Notch Filter": {"Power Hum 50 Hz": {"frequency": 50, "q": 12}, "Power Hum 60 Hz": {"frequency": 60, "q": 12}, "Hum Harmonic 100 Hz": {"frequency": 100, "q": 14}, "Hum Harmonic 120 Hz": {"frequency": 120, "q": 14}, "Whistle 1 kHz": {"frequency": 1000, "q": 20}, "Whistle 2 kHz": {"frequency": 2000, "q": 20}, "Whistle 4 kHz": {"frequency": 4000, "q": 20}, "Feedback 6 kHz": {"frequency": 6000, "q": 25}, "Broad Mid Cut": {"frequency": 1500, "q": 1}, "Surgical": {"frequency": 3000, "q": 50}},
+        "Graphic Equalizer": {"Bass Boost": {"b60": 8, "b250": 4, "b1000": 0, "b4000": 0, "b12000": -1}, "Treble Boost": {"b60": -1, "b250": 0, "b1000": 0, "b4000": 4, "b12000": 8}, "Smile": {"b60": 6, "b250": 3, "b1000": -2, "b4000": 3, "b12000": 6}, "Voice Clarity": {"b60": -6, "b250": -2, "b1000": 2, "b4000": 5, "b12000": 2}, "Podcast": {"b60": -8, "b250": 1, "b1000": 3, "b4000": 3, "b12000": -2}, "Warm": {"b60": 4, "b250": 3, "b1000": 1, "b4000": -1, "b12000": -3}, "Bright": {"b60": -3, "b250": -1, "b1000": 1, "b4000": 4, "b12000": 6}, "Lo-Fi": {"b60": -8, "b250": 3, "b1000": 4, "b4000": -1, "b12000": -10}, "Telephone": {"b60": -18, "b250": -8, "b1000": 5, "b4000": 3, "b12000": -18}, "Extreme V": {"b60": 15, "b250": 8, "b1000": -10, "b4000": 8, "b12000": 15}},
+        "Parametric Equalizer": {"Voice Presence": {"frequency": 3500, "gain": 4, "q": 1.2}, "Remove Mud": {"frequency": 300, "gain": -5, "q": 1.4}, "Remove Boxiness": {"frequency": 600, "gain": -4, "q": 2}, "Add Warmth": {"frequency": 180, "gain": 4, "q": .8}, "Bass Punch": {"frequency": 90, "gain": 6, "q": 1.1}, "Air": {"frequency": 12000, "gain": 5, "q": .7}, "Tame Harshness": {"frequency": 4500, "gain": -5, "q": 2.5}, "Nasal Cut": {"frequency": 1000, "gain": -6, "q": 3}, "Surgical Cut": {"frequency": 2500, "gain": -15, "q": 12}, "Resonant Boost": {"frequency": 2000, "gain": 12, "q": 8}},
+        "De-Esser": {"Gentle Voice": {"intensity": 25, "maximum": 35, "frequency": 55}, "Male Voice": {"intensity": 40, "maximum": 50, "frequency": 42}, "Female Voice": {"intensity": 45, "maximum": 55, "frequency": 65}, "Podcast": {"intensity": 50, "maximum": 60, "frequency": 60}, "Bright Mic": {"intensity": 58, "maximum": 65, "frequency": 70}, "Sharp S Sounds": {"intensity": 65, "maximum": 75, "frequency": 62}, "Strong": {"intensity": 72, "maximum": 80, "frequency": 60}, "Very Strong": {"intensity": 82, "maximum": 90, "frequency": 65}, "High Frequency Only": {"intensity": 65, "maximum": 75, "frequency": 85}, "Maximum": {"intensity": 100, "maximum": 100, "frequency": 65}},
         "Bass and Treble": {"Gentle Warmth": {"bass": 3, "treble": -1}, "Bass Boost": {"bass": 6, "treble": 0}, "Huge Bass": {"bass": 12, "treble": -2}, "Gentle Clarity": {"bass": 0, "treble": 3}, "Treble Boost": {"bass": 0, "treble": 6}, "Bright": {"bass": -2, "treble": 10}, "Smile Curve": {"bass": 6, "treble": 6}, "Mid Focus": {"bass": -4, "treble": -4}, "Telephone": {"bass": -12, "treble": 8}, "Lo-Fi": {"bass": -10, "treble": -10}},
         "Tremolo": {"Gentle Sway": {"rate": .8, "depth": 20}, "Slow Pulse": {"rate": 2, "depth": 45}, "Classic": {"rate": 4, "depth": 50}, "Guitar Amp": {"rate": 5, "depth": 60}, "Fast Pulse": {"rate": 8, "depth": 70}, "Helicopter": {"rate": 12, "depth": 90}, "Stutter": {"rate": 20, "depth": 100}, "Slow Chop": {"rate": 1.5, "depth": 100}, "Nervous": {"rate": 35, "depth": 75}, "Ring Buzz": {"rate": 70, "depth": 95}},
         "Distortion": {"Soft Saturation": {"amount": 5}, "Warm Drive": {"amount": 15}, "Tube Crunch": {"amount": 25}, "Blues Drive": {"amount": 35}, "Rock Rhythm": {"amount": 45}, "Hard Rock": {"amount": 60}, "Heavy Drive": {"amount": 70}, "Metal": {"amount": 82}, "Destroyed Speaker": {"amount": 92}, "Maximum Carnage": {"amount": 100}},
@@ -306,6 +313,13 @@ class QuickEdit(tk.Tk):
         effects.add_command(label="Low-Pass Filter", command=self.lowpass_audio)
         effects.add_command(label="High-Pass Filter", command=self.highpass_audio)
         effects.add_command(label="Compressor", command=self.compressor_audio)
+        effects.add_command(label="Expander", command=self.expander_audio)
+        effects.add_command(label="Limiter", command=self.limiter_audio)
+        effects.add_command(label="Band-Pass Filter", command=self.bandpass_audio)
+        effects.add_command(label="Notch Filter", command=self.notch_audio)
+        effects.add_command(label="Graphic Equalizer", command=self.graphic_equalizer_audio)
+        effects.add_command(label="Parametric Equalizer", command=self.parametric_equalizer_audio)
+        effects.add_command(label="De-Esser", command=self.deesser_audio)
         effects.add_command(label="Bass and Treble", command=self.bass_treble_audio)
         effects.add_command(label="Tremolo", command=self.tremolo_audio)
         effects.add_command(label="Distortion", command=self.distortion_audio)
@@ -2095,6 +2109,13 @@ class QuickEdit(tk.Tk):
             "Tape Hiss Reduction": lambda: f"afftdn=nr={s['reduction']:g}:nf={s['floor']:g}:nt=white:tn=1",
             "Add Tape Hiss": lambda: self._tape_hiss_filter(s),
             "Add Vinyl Crackle": lambda: self._vinyl_crackle_filter(s),
+            "Expander": lambda: self._expander_filter(s),
+            "Limiter": lambda: self._limiter_filter(s),
+            "Band-Pass Filter": lambda: f"bandpass=f={s['frequency']:g}:width_type=q:width={s['q']:g}",
+            "Notch Filter": lambda: f"bandreject=f={s['frequency']:g}:width_type=q:width={s['q']:g}",
+            "Graphic Equalizer": lambda: self._graphic_eq_filter(s),
+            "Parametric Equalizer": lambda: f"equalizer=f={s['frequency']:g}:width_type=q:width={s['q']:g}:g={s['gain']:g}",
+            "De-Esser": lambda: f"deesser=i={s['intensity']/100:g}:m={s['maximum']/100:g}:f={s['frequency']/100:g}",
             "Change Speed": lambda: self.media.tempo_filter(s["value"] / 100),
             "Change Pitch": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate},{self.media.tempo_filter(1/(2**(s['value']/12)))}",
             "Tape Pitch and Speed": lambda: f"asetrate={doc.frame_rate}*{2**(s['value']/12):.8g},aresample={doc.frame_rate}",
@@ -2605,7 +2626,79 @@ class QuickEdit(tk.Tk):
             threshold, ratio = settings["threshold"], settings["ratio"]
             attack, release = settings["attack"], settings["release"]
             linear_threshold = 10 ** (threshold / 20)
-            self._apply_ffmpeg_effect(f"Compressor at {threshold:g} dB, {ratio:g} to 1", f"acompressor=threshold={linear_threshold:.8g}:ratio={ratio:g}:attack={attack:g}:release={release:g}")
+            self._apply_ffmpeg_effect(f"Compressor at {threshold:g} dB, {ratio:g} to 1", f"acompressor=threshold={linear_threshold:.8g}:ratio={min(20, ratio):g}:attack={attack:g}:release={release:g}")
+
+    @staticmethod
+    def _expander_filter(settings: dict[str, float]) -> str:
+        threshold = 10 ** (settings["threshold"] / 20)
+        return f"agate=threshold={threshold:.8g}:ratio={settings['ratio']:g}:attack={settings['attack']:g}:release={settings['release']:g}:range=0.06125"
+
+    @staticmethod
+    def _limiter_filter(settings: dict[str, float]) -> str:
+        ceiling = 10 ** (settings["ceiling"] / 20)
+        return f"alimiter=limit={ceiling:.8g}:attack={settings['attack']:g}:release={settings['release']:g}:level=false"
+
+    @staticmethod
+    def _graphic_eq_filter(settings: dict[str, float]) -> str:
+        bands = ((60, "b60"), (250, "b250"), (1000, "b1000"), (4000, "b4000"), (12000, "b12000"))
+        return ",".join(f"equalizer=f={frequency}:width_type=o:width=1:g={settings[key]:g}" for frequency, key in bands)
+
+    def expander_audio(self) -> None:
+        settings = self.effect_parameters("Expander", [
+            ("threshold", "Threshold in decibels, minus 80 through 0", -40, -80, 0),
+            ("ratio", "Expansion ratio, 1 through 20", 3, 1, 20),
+            ("attack", "Attack in milliseconds, point 01 through 2000", 8, .01, 2000),
+            ("release", "Release in milliseconds, point 01 through 9000", 180, .01, 9000),
+        ])
+        if settings: self._apply_ffmpeg_effect("Expander", self._expander_filter(settings))
+
+    def limiter_audio(self) -> None:
+        settings = self.effect_parameters("Limiter", [
+            ("ceiling", "Output ceiling in decibels, minus 24 through 0", -1, -24, 0),
+            ("attack", "Lookahead attack in milliseconds, point 1 through 80", 5, .1, 80),
+            ("release", "Release in milliseconds, 1 through 8000", 80, 1, 8000),
+        ])
+        if settings: self._apply_ffmpeg_effect("Limiter", self._limiter_filter(settings))
+
+    def bandpass_audio(self) -> None:
+        settings = self.effect_parameters("Band-Pass Filter", [
+            ("frequency", "Center frequency in Hertz, 1 through 20000", 1500, 1, 20000),
+            ("q", "Bandwidth Q, point 1 through 100", 1, .1, 100),
+        ])
+        if settings: self._apply_ffmpeg_effect("Band-pass filter", f"bandpass=f={settings['frequency']:g}:width_type=q:width={settings['q']:g}")
+
+    def notch_audio(self) -> None:
+        settings = self.effect_parameters("Notch Filter", [
+            ("frequency", "Notch frequency in Hertz, 1 through 20000", 60, 1, 20000),
+            ("q", "Notch Q, point 1 through 100", 12, .1, 100),
+        ])
+        if settings: self._apply_ffmpeg_effect("Notch filter", f"bandreject=f={settings['frequency']:g}:width_type=q:width={settings['q']:g}")
+
+    def graphic_equalizer_audio(self) -> None:
+        settings = self.effect_parameters("Graphic Equalizer", [
+            ("b60", "60 Hertz gain in decibels, minus 24 through plus 24", 0, -24, 24),
+            ("b250", "250 Hertz gain in decibels, minus 24 through plus 24", 0, -24, 24),
+            ("b1000", "1 kilohertz gain in decibels, minus 24 through plus 24", 0, -24, 24),
+            ("b4000", "4 kilohertz gain in decibels, minus 24 through plus 24", 0, -24, 24),
+            ("b12000", "12 kilohertz gain in decibels, minus 24 through plus 24", 0, -24, 24),
+        ])
+        if settings: self._apply_ffmpeg_effect("Graphic equalizer", self._graphic_eq_filter(settings))
+
+    def parametric_equalizer_audio(self) -> None:
+        settings = self.effect_parameters("Parametric Equalizer", [
+            ("frequency", "Center frequency in Hertz, 1 through 20000", 1000, 1, 20000),
+            ("gain", "Gain in decibels, minus 24 through plus 24", 0, -24, 24),
+            ("q", "Bandwidth Q, point 1 through 100", 1, .1, 100),
+        ])
+        if settings: self._apply_ffmpeg_effect("Parametric equalizer", f"equalizer=f={settings['frequency']:g}:width_type=q:width={settings['q']:g}:g={settings['gain']:g}")
+
+    def deesser_audio(self) -> None:
+        settings = self.effect_parameters("De-Esser", [
+            ("intensity", "Detection intensity percentage, 0 through 100", 50, 0, 100),
+            ("maximum", "Maximum reduction percentage, 0 through 100", 60, 0, 100),
+            ("frequency", "Target frequency position percentage, 0 through 100", 60, 0, 100),
+        ])
+        if settings: self._apply_ffmpeg_effect("De-esser", f"deesser=i={settings['intensity']/100:g}:m={settings['maximum']/100:g}:f={settings['frequency']/100:g}")
 
     def bass_treble_audio(self) -> None:
         settings = self.effect_parameters("Bass and Treble", [
