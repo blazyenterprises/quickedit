@@ -1140,21 +1140,12 @@ class QuickEdit(tk.Tk):
     def search_online(self, provider: str) -> None:
         result_kind = "videos"
         if provider == "YouTube":
-            result_kind = simpledialog.askstring(
-                "YouTube result filter",
-                "Type videos, playlists, or channels:",
-                parent=self,
-                initialvalue="videos",
-            ) or ""
-            result_kind = result_kind.strip().lower()
-            if not result_kind:
+            options = self.youtube_search_options()
+            if not options:
                 return
-            aliases = {"video": "videos", "playlist": "playlists", "channel": "channels"}
-            result_kind = aliases.get(result_kind, result_kind)
-            if result_kind not in {"videos", "playlists", "channels"}:
-                messagebox.showerror("YouTube filter", "Enter videos, playlists, or channels.", parent=self)
-                return
-        query = simpledialog.askstring(f"Search {provider}", "Search terms:", parent=self)
+            query, result_kind = options
+        else:
+            query = simpledialog.askstring(f"Search {provider}", "Search terms:", parent=self)
         if not query:
             return
         self.announce(f"Searching {provider} for {query}.")
@@ -1164,6 +1155,55 @@ class QuickEdit(tk.Tk):
             messagebox.showerror(f"{provider} search failed", str(exc), parent=self)
             return
         self._choose_online_result(results, f"{provider} results")
+
+    def youtube_search_options(self) -> tuple[str, str] | None:
+        """Collect a YouTube query and result type with explicitly named controls."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Search YouTube")
+        dialog.transient(self)
+        dialog.grab_set()
+        result: list[tuple[str, str]] = []
+        query_var = tk.StringVar()
+        tk.Label(dialog, text="YouTube search terms").pack(anchor="w", padx=12, pady=(12, 4))
+        query_entry = ttk.Entry(dialog, textvariable=query_var, width=60, takefocus=True)
+        query_entry.pack(fill="x", padx=12)
+        tk.Label(dialog, text="Result type").pack(anchor="w", padx=12, pady=(12, 4))
+        type_list = tk.Listbox(dialog, exportselection=False, height=3, takefocus=True)
+        for label in ("Videos", "Playlists", "Channels"):
+            type_list.insert("end", label)
+        type_list.selection_set(0)
+        type_list.activate(0)
+        type_list.pack(fill="x", padx=12)
+        buttons = tk.Frame(dialog)
+        buttons.pack(fill="x", padx=12, pady=12)
+
+        def announce_type(event=None) -> None:
+            selected = type_list.curselection()
+            if selected:
+                self.screen_reader.speak(f"YouTube result type: {type_list.get(selected[0])}. {selected[0] + 1} of 3.")
+
+        def submit(event=None) -> str:
+            query = query_var.get().strip()
+            selected = type_list.curselection()
+            if not query:
+                self.screen_reader.speak("Enter YouTube search terms.")
+                query_entry.focus_set()
+                return "break"
+            kind = (type_list.get(selected[0]) if selected else "Videos").lower()
+            result.append((query, kind))
+            dialog.destroy()
+            return "break"
+
+        query_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("YouTube search terms, edit."))
+        query_entry.bind("<Return>", submit)
+        type_list.bind("<FocusIn>", announce_type)
+        type_list.bind("<<ListboxSelect>>", announce_type)
+        type_list.bind("<Return>", submit)
+        self.accessible_button(buttons, "Search YouTube", submit).pack(side="left")
+        self.accessible_button(buttons, "Cancel YouTube Search", dialog.destroy).pack(side="right")
+        query_entry.focus_set()
+        self.wait_window(dialog)
+        return result[0] if result else None
 
     def login_audiovault(self) -> None:
         dialog = tk.Toplevel(self)
@@ -2426,7 +2466,7 @@ class QuickEdit(tk.Tk):
     def virtual_midi_keyboard(self) -> None:
         dialog = tk.Toplevel(self)
         dialog.title("Virtual MIDI and Sample Keyboard")
-        dialog.geometry("620x520")
+        dialog.geometry("760x640")
         dialog.transient(self)
         sample_path = [""]
         root_note = [60]
@@ -2436,21 +2476,28 @@ class QuickEdit(tk.Tk):
         temporary_files: list[str] = []
         note_names = ("C", "C sharp", "D", "E flat", "E", "F", "F sharp", "G", "A flat", "A", "B flat", "B")
         notes = list(range(36, 85))
-        waveform = tk.StringVar(value="sine")
-        preset_name = tk.StringVar(value="")
+        waveforms = ("sine", "square", "triangle", "sawtooth", "white noise", "pink noise")
         status = tk.StringVar(value="Built-in sine synthesizer. Space previews; Enter inserts the note.")
         tk.Label(dialog, textvariable=status, anchor="w", wraplength=580).pack(fill="x", padx=12, pady=8)
         instrument_row = tk.Frame(dialog)
         instrument_row.pack(fill="x", padx=12, pady=(0, 8))
-        tk.Label(instrument_row, text="Synth waveform:").pack(side="left")
-        waveform_box = ttk.Combobox(
-            instrument_row, textvariable=waveform, state="readonly", width=14,
-            values=("sine", "square", "triangle", "sawtooth", "white noise", "pink noise"),
-        )
-        waveform_box.pack(side="left", padx=(5, 12))
-        tk.Label(instrument_row, text="SoundFont preset:").pack(side="left")
-        preset_box = ttk.Combobox(instrument_row, textvariable=preset_name, state="readonly", width=30)
-        preset_box.pack(side="left", padx=5, fill="x", expand=True)
+        waveform_column = tk.Frame(instrument_row)
+        waveform_column.pack(side="left", fill="both", padx=(0, 12))
+        tk.Label(waveform_column, text="Synth waveform list").pack(anchor="w")
+        waveform_list = tk.Listbox(waveform_column, exportselection=False, height=6, width=18, takefocus=True)
+        for name in waveforms:
+            waveform_list.insert("end", name)
+        waveform_list.selection_set(0)
+        waveform_list.activate(0)
+        waveform_list.pack(fill="both")
+        preset_column = tk.Frame(instrument_row)
+        preset_column.pack(side="left", fill="both", expand=True)
+        tk.Label(preset_column, text="SoundFont preset list").pack(anchor="w")
+        preset_list = tk.Listbox(preset_column, exportselection=False, height=6, width=55, takefocus=True)
+        preset_list.insert("end", "Choose a SoundFont to load its presets")
+        preset_list.selection_set(0)
+        preset_list.activate(0)
+        preset_list.pack(fill="both", expand=True)
         note_list = tk.Listbox(dialog, exportselection=False, height=20)
         for note in notes:
             note_list.insert("end", f"{note_names[note % 12]} {note // 12 - 1}; MIDI note {note}")
@@ -2463,6 +2510,14 @@ class QuickEdit(tk.Tk):
         def selected_note() -> int:
             selected = note_list.curselection()
             return notes[selected[0]] if selected else 60
+
+        def selected_waveform() -> str:
+            selected = waveform_list.curselection()
+            return waveforms[selected[0]] if selected else "sine"
+
+        def selected_preset_index() -> int:
+            selected = preset_list.curselection()
+            return selected[0] if selected and selected[0] < len(soundfont_presets) else -1
 
         def choose_sample() -> None:
             path = filedialog.askopenfilename(title="Choose a sample for the keyboard", parent=dialog)
@@ -2486,8 +2541,12 @@ class QuickEdit(tk.Tk):
             soundfont_path[0] = path
             soundfont_presets[:] = presets
             labels = [f"Bank {item.bank}, program {item.program}: {item.name}" for item in presets]
-            preset_box.configure(values=labels)
-            preset_box.current(0)
+            preset_list.delete(0, "end")
+            for label in labels:
+                preset_list.insert("end", label)
+            preset_list.selection_set(0)
+            preset_list.activate(0)
+            preset_list.see(0)
             instrument_mode[0] = "soundfont"
             self.soundfont_path = path
             status.set(f"SoundFont {os.path.basename(path)}; {len(presets)} presets available.")
@@ -2504,13 +2563,14 @@ class QuickEdit(tk.Tk):
 
         def waveform_changed(event=None) -> None:
             instrument_mode[0] = "synth"
-            status.set(f"Built-in {waveform.get()} synthesizer.")
+            status.set(f"Built-in {selected_waveform()} synthesizer.")
             self.screen_reader.speak(status.get())
 
         def preset_changed(event=None) -> None:
-            if soundfont_path[0] and preset_box.current() >= 0:
+            index = selected_preset_index()
+            if soundfont_path[0] and index >= 0:
                 instrument_mode[0] = "soundfont"
-                preset = soundfont_presets[preset_box.current()]
+                preset = soundfont_presets[index]
                 status.set(f"SoundFont preset {preset.name}; bank {preset.bank}, program {preset.program}.")
                 self.screen_reader.speak(status.get())
 
@@ -2525,8 +2585,8 @@ class QuickEdit(tk.Tk):
                 self.media.decode_to_format(sample_path[0], decoded, rate, channels, width)
                 factor = 2 ** ((note - root_note[0]) / 12)
                 self.media.transform_wav(decoded, path, f"asetrate={rate}*{factor:.10g},aresample={rate}", width)
-            elif instrument_mode[0] == "soundfont" and soundfont_path[0] and preset_box.current() >= 0:
-                preset = soundfont_presets[preset_box.current()]
+            elif instrument_mode[0] == "soundfont" and soundfont_path[0] and selected_preset_index() >= 0:
+                preset = soundfont_presets[selected_preset_index()]
                 handle, midi_path = tempfile.mkstemp(prefix="quickedit-key-", suffix=".mid"); os.close(handle)
                 temporary_files.append(midi_path)
                 with open(midi_path, "wb") as midi_file:
@@ -2536,7 +2596,7 @@ class QuickEdit(tk.Tk):
                 self.media.render_midi(midi_path, soundfont_path[0], rendered, rate)
                 self.media.decode_to_format(rendered, path, rate, channels, width)
             else:
-                frames = signal_generator.generate_waveform(waveform.get(), 440 * 2 ** ((note - 69) / 12), .6, rate, width, channels, -12)
+                frames = signal_generator.generate_waveform(selected_waveform(), 440 * 2 ** ((note - 69) / 12), .6, rate, width, channels, -12)
                 with wave.open(path, "wb") as target:
                     target.setnchannels(channels); target.setsampwidth(width); target.setframerate(rate); target.writeframes(frames)
             return path
@@ -2577,8 +2637,10 @@ class QuickEdit(tk.Tk):
             dialog.destroy()
 
         note_list.bind("<space>", preview); note_list.bind("<Return>", insert); note_list.bind("<KeyPress>", play_key, add="+")
-        waveform_box.bind("<<ComboboxSelected>>", waveform_changed)
-        preset_box.bind("<<ComboboxSelected>>", preset_changed)
+        waveform_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Synth waveform list. {selected_waveform()} selected."))
+        waveform_list.bind("<<ListboxSelect>>", waveform_changed)
+        preset_list.bind("<FocusIn>", lambda event: self.screen_reader.speak("SoundFont preset list. Choose SoundFont if no presets are loaded."))
+        preset_list.bind("<<ListboxSelect>>", preset_changed)
         self.accessible_button(buttons, "Choose Sample Instrument", choose_sample).pack(side="left")
         self.accessible_button(buttons, "Choose SoundFont", choose_keyboard_soundfont).pack(side="left", padx=8)
         self.accessible_button(buttons, "Preview Note", preview).pack(side="left", padx=8)
