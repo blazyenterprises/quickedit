@@ -260,6 +260,9 @@ class QuickEdit(tk.Tk):
         self.online_download_sample_rate = 44100
         self.online_download_bitrate = 192
         self.last_open_directory = ""
+        self.workspace_mode = "editor"
+        self.library_files: list[str] = []
+        self.library_playlists: dict[str, list[str]] = {}
         self.navigation_step_index = self.NAVIGATION_STEPS.index(0.1)
         self.screen_reader = ScreenReaderAnnouncer()
         self._active_menu: tk.Menu | None = None
@@ -269,6 +272,8 @@ class QuickEdit(tk.Tk):
         self.theme_var = tk.StringVar(value=self.theme_manager.mode)
         self.status_var = tk.StringVar(value="Ready. Open a PCM WAV file with Control O.")
         self.details_var = tk.StringVar(value="No audio is open.")
+        self.workspace_var = tk.StringVar(value=self.workspace_mode)
+        self.workspace_heading_var = tk.StringVar(value={"editor": "Editor View", "library": "Library View", "daw": "DAW View"}[self.workspace_mode])
         self._build_menu()
         self._build_ui()
         self._bind_keys()
@@ -277,6 +282,12 @@ class QuickEdit(tk.Tk):
         self.after(1500, self._poll_system_theme)
 
     def _build_menu(self) -> None:
+        if self.workspace_mode == "library":
+            self._build_library_menu()
+            return
+        if self.workspace_mode == "daw":
+            self._build_daw_menu()
+            return
         menu = tk.Menu(self)
         file_menu = tk.Menu(menu, tearoff=False)
         file_menu.add_command(label="New Audio\tCtrl+N", command=self.new_file)
@@ -418,10 +429,106 @@ class QuickEdit(tk.Tk):
         ):
             appearance.add_radiobutton(label=label, variable=self.theme_var, value=value, command=lambda selected=value: self.set_theme(selected))
         menu.add_cascade(label="Appearance", menu=appearance)
+        self._add_workspace_menu(menu)
         self.config(menu=menu)
         self._apply_menu_mnemonics(menu)
         self.recent_menu.configure(postcommand=self._post_recent_menu)
         self.favorites_menu.configure(postcommand=self._post_favorites_menu)
+
+    def _add_workspace_menu(self, menu: tk.Menu) -> None:
+        view = tk.Menu(menu, tearoff=False)
+        view.add_radiobutton(label="Editor View", value="editor", variable=self.workspace_var, command=lambda: self.switch_workspace("editor"))
+        view.add_radiobutton(label="Library View", value="library", variable=self.workspace_var, command=lambda: self.switch_workspace("library"))
+        view.add_radiobutton(label="DAW View", value="daw", variable=self.workspace_var, command=lambda: self.switch_workspace("daw"))
+        menu.add_cascade(label="Workspace", menu=view)
+
+    def switch_workspace(self, mode: str) -> None:
+        if mode not in {"editor", "library", "daw"}:
+            return
+        self.workspace_mode = mode
+        labels = {"editor": "Editor View", "library": "Library View", "daw": "DAW View"}
+        self.workspace_var.set(mode)
+        self.workspace_heading_var.set(labels[mode])
+        self._build_menu()
+        self._save_file_history()
+        self.announce(f"Switched to {labels[mode]}. The open audio and playback position were preserved.")
+
+    def _build_library_menu(self) -> None:
+        menu = tk.Menu(self)
+        library = tk.Menu(menu, tearoff=False)
+        library.add_command(label="Add Audio Files to Library", command=self.add_files_to_library)
+        library.add_command(label="Remove Missing Library Files", command=self.remove_missing_library_files)
+        library.add_separator()
+        library.add_command(label="Artists", command=lambda: self.browse_library("artist"))
+        library.add_command(label="Albums", command=lambda: self.browse_library("album"))
+        library.add_command(label="All Songs", command=lambda: self.browse_library("songs"))
+        library.add_command(label="Favorites", command=lambda: self.browse_library("favorites"))
+        library.add_command(label="Browse Playlists", command=self.browse_playlists)
+        library.add_command(label="Create Playlist", command=self.create_library_playlist)
+        library.add_command(label="Add Current Song to Playlist", command=self.add_current_to_playlist)
+        library.add_command(label="Recently Opened", command=lambda: self.browse_library("recent"))
+        library.add_separator(); library.add_command(label="Exit", command=self.destroy)
+        menu.add_cascade(label="Library", menu=library)
+        playback = tk.Menu(menu, tearoff=False)
+        playback.add_command(label="Play or Pause\tSpace", command=self.toggle_play)
+        playback.add_command(label="Restart Current Song\tF2", command=self.master_play)
+        playback.add_command(label="Stop", command=lambda: self.stop(announce=True))
+        playback.add_command(label="Playback Speed", command=self.set_playback_speed)
+        playback.add_command(label="Choose Output Device", command=self.choose_output_device)
+        menu.add_cascade(label="Playback", menu=playback)
+        now_playing = tk.Menu(menu, tearoff=False)
+        now_playing.add_command(label="Show Current Song Information\tF6", command=self.announce_status)
+        now_playing.add_command(label="Edit Current Song Tags", command=self.edit_tags)
+        now_playing.add_command(label="Fill Current Song Tags", command=self.fill_tags_from_filename)
+        now_playing.add_command(label="Add Current Song to Favorites", command=self.add_current_favorite)
+        menu.add_cascade(label="Now Playing", menu=now_playing)
+        editing = tk.Menu(menu, tearoff=False)
+        editing.add_command(label="Switch to Editor View", command=lambda: self.switch_workspace("editor"))
+        editing.add_command(label="Save Edited Audio", command=self.save)
+        editing.add_command(label="Undo", command=self.undo)
+        editing.add_command(label="Effects Menu in Editor View", command=lambda: self.switch_workspace("editor"))
+        menu.add_cascade(label="Editing Tools", menu=editing)
+        self._add_workspace_menu(menu); self.config(menu=menu); self._apply_menu_mnemonics(menu)
+
+    def _build_daw_menu(self) -> None:
+        menu = tk.Menu(self)
+        project = tk.Menu(menu, tearoff=False)
+        project.add_command(label="New Audio Project\tCtrl+N", command=self.new_file)
+        project.add_command(label="Open Audio or MIDI\tCtrl+O", command=self.open_file)
+        project.add_command(label="Save Project Audio\tCtrl+S", command=self.save)
+        project.add_command(label="Save Project Audio As\tCtrl+Shift+S", command=self.save_as)
+        project.add_separator(); project.add_command(label="Exit", command=self.destroy)
+        menu.add_cascade(label="Project", menu=project)
+        recording = tk.Menu(menu, tearoff=False)
+        recording.add_command(label="Record or Stop Recording\tF9", command=self.toggle_recording)
+        recording.add_command(label="Choose Input Device", command=self.choose_input_device)
+        recording.add_command(label="Choose Output Device", command=self.choose_output_device)
+        menu.add_cascade(label="Recording", menu=recording)
+        instruments = tk.Menu(menu, tearoff=False)
+        instruments.add_command(label="Virtual MIDI and Sample Keyboard", command=self.virtual_midi_keyboard)
+        instruments.add_command(label="Choose SoundFont", command=self.choose_soundfont)
+        instruments.add_command(label="Re-render MIDI with Current SoundFont", command=self.rerender_midi)
+        instruments.add_separator()
+        instruments.add_command(label="Open VST2 and VST3 Rack", command=self.open_carla_host)
+        instruments.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
+        menu.add_cascade(label="Instruments and Plug-ins", menu=instruments)
+        create = tk.Menu(menu, tearoff=False)
+        create.add_command(label="Tone or Noise", command=self.generate_tone)
+        create.add_command(label="DTMF Telephone Keys", command=lambda: self.generate_phone_keys("DTMF"))
+        create.add_command(label="MF Telephone Keys", command=lambda: self.generate_phone_keys("MF"))
+        menu.add_cascade(label="Generate", menu=create)
+        processing = tk.Menu(menu, tearoff=False)
+        processing.add_command(label="Switch to Editor Effects", command=lambda: self.switch_workspace("editor"))
+        processing.add_command(label="Mix Audio File at Cursor", command=self.mix_audio_file)
+        processing.add_command(label="Crossfade Selected Halves", command=self.crossfade_selection)
+        menu.add_cascade(label="Processing", menu=processing)
+        transport = tk.Menu(menu, tearoff=False)
+        transport.add_command(label="Play or Pause\tSpace", command=self.toggle_play)
+        transport.add_command(label="Play from Start\tF2", command=self.master_play)
+        transport.add_command(label="Play Selection\tShift+Space", command=self.play_selection)
+        transport.add_command(label="Go to Time\tCtrl+G", command=self.go_to_time)
+        menu.add_cascade(label="Transport", menu=transport)
+        self._add_workspace_menu(menu); self.config(menu=menu); self._apply_menu_mnemonics(menu)
 
     def set_theme(self, mode: str) -> None:
         resolved = self.theme_manager.resolve_mode() if mode == self.theme_manager.mode else ""
@@ -495,6 +602,7 @@ class QuickEdit(tk.Tk):
         frame = tk.Frame(self, padx=18, pady=18)
         frame.pack(fill="both", expand=True)
         tk.Label(frame, text="QuickEdit", font=("Segoe UI", 22, "bold")).pack(anchor="w")
+        tk.Label(frame, textvariable=self.workspace_heading_var, font=("Segoe UI", 13, "bold")).pack(anchor="w")
         tk.Label(
             frame,
             text="Keyboard-first audio editing prototype",
@@ -812,6 +920,11 @@ class QuickEdit(tk.Tk):
             self.online_download_sample_rate = int(settings.get("online_download_sample_rate", self.__dict__.get("online_download_sample_rate", 44100)))
             self.online_download_bitrate = int(settings.get("online_download_bitrate", self.__dict__.get("online_download_bitrate", 192)))
             self.last_open_directory = str(settings.get("last_open_directory", self.__dict__.get("last_open_directory", "")))
+            mode = str(settings.get("workspace_mode", self.__dict__.get("workspace_mode", "editor")))
+            self.workspace_mode = mode if mode in {"editor", "library", "daw"} else "editor"
+            self.library_files = [str(path) for path in settings.get("library_files", self.__dict__.get("library_files", []))]
+            raw_playlists = settings.get("library_playlists", self.__dict__.get("library_playlists", {}))
+            self.library_playlists = {str(name): [str(path) for path in paths] for name, paths in raw_playlists.items()} if isinstance(raw_playlists, dict) else {}
         except (OSError, ValueError, TypeError):
             pass
 
@@ -830,6 +943,9 @@ class QuickEdit(tk.Tk):
             online_download_sample_rate=self.__dict__.get("online_download_sample_rate", 44100),
             online_download_bitrate=self.__dict__.get("online_download_bitrate", 192),
             last_open_directory=self.__dict__.get("last_open_directory", ""),
+            workspace_mode=self.__dict__.get("workspace_mode", "editor"),
+            library_files=self.__dict__.get("library_files", []),
+            library_playlists=self.__dict__.get("library_playlists", {}),
         )
         with open(self._history_path, "w", encoding="utf-8") as target:
             json.dump(settings, target, indent=2)
@@ -894,6 +1010,116 @@ class QuickEdit(tk.Tk):
         path = os.path.abspath(self.document.source_path)
         self.favorite_files = [item for item in self.favorite_files if os.path.normcase(item) != os.path.normcase(path)]
         self._save_file_history(); self.announce(f"Removed {os.path.basename(path)} from favorites.")
+
+    def add_files_to_library(self) -> None:
+        paths = filedialog.askopenfilenames(
+            title="Add audio files to QuickEdit library",
+            filetypes=[("Audio files", "*.wav *.mp3 *.flac *.ogg *.oga *.opus *.m4a *.aac *.wma *.aiff *.aif *.au *.snd *.caf *.wv *.mka *.webm *.mid *.midi"), ("All files", "*.*")],
+            parent=self,
+        )
+        if not paths:
+            return
+        existing = {os.path.normcase(os.path.abspath(path)) for path in self.library_files}
+        added = 0
+        for path in paths:
+            absolute = os.path.abspath(path)
+            if os.path.normcase(absolute) not in existing:
+                self.library_files.append(absolute); existing.add(os.path.normcase(absolute)); added += 1
+        self._save_file_history(); self.announce(f"Added {added} audio files to the library.")
+
+    def remove_missing_library_files(self) -> None:
+        before = len(self.library_files)
+        self.library_files = [path for path in self.library_files if os.path.isfile(path)]
+        removed = before - len(self.library_files)
+        self._save_file_history(); self.announce(f"Removed {removed} missing files from the library.")
+
+    def browse_library(self, category: str, selected_paths: list[str] | None = None) -> None:
+        if category == "recent":
+            paths = [path for path in self.recent_files if os.path.isfile(path)]
+        elif category == "favorites":
+            paths = [path for path in self.favorite_files if os.path.isfile(path)]
+        elif selected_paths is not None:
+            paths = [path for path in selected_paths if os.path.isfile(path)]
+        else:
+            paths = [path for path in self.library_files if os.path.isfile(path)]
+        if not paths:
+            self.announce("This library section is empty. Use Add Audio Files to Library first.")
+            return
+        items = []
+        for path in paths:
+            try: tags = self._normalized_metadata(self.media.read_metadata(path))
+            except (OSError, MediaError): tags = {}
+            title = tags.get("title") or os.path.splitext(os.path.basename(path))[0]
+            artist = tags.get("artist", "Unknown artist"); album = tags.get("album", "Unknown album")
+            if category == "artist": label = f"{artist}; {title}; {album}"
+            elif category == "album": label = f"{album}; {title}; {artist}"
+            else: label = f"{title}; {artist}; {album}"
+            items.append((label, path))
+        items.sort(key=lambda item: item[0].casefold())
+        dialog = tk.Toplevel(self); dialog.title(f"Library {category.title()}"); dialog.geometry("760x520"); dialog.transient(self); dialog.grab_set()
+        tk.Label(dialog, text=f"{category.title()} list").pack(anchor="w", padx=12, pady=(12, 3))
+        choices = tk.Listbox(dialog, exportselection=False, height=22, width=100, takefocus=True)
+        for label, path in items: choices.insert("end", label)
+        choices.selection_set(0); choices.activate(0); choices.pack(fill="both", expand=True, padx=12)
+        buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
+        def speak(event=None) -> None:
+            selected = choices.curselection()
+            if selected: self.screen_reader.speak(f"{choices.get(selected[0])}. {selected[0] + 1} of {len(items)}.")
+        def open_song(event=None) -> str:
+            selected = choices.curselection()
+            if selected:
+                path = items[selected[0]][1]; dialog.destroy(); self._open_path(path); self.master_play()
+            return "break"
+        def close(event=None) -> str: dialog.destroy(); return "break"
+        choices.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Library {category} list. Use arrows and press Enter to play."))
+        choices.bind("<<ListboxSelect>>", speak); choices.bind("<Return>", open_song); choices.bind("<Double-Button-1>", open_song)
+        self.accessible_button(buttons, "Open and Play", open_song).pack(side="left")
+        self.accessible_button(buttons, "Close Library", close).pack(side="right")
+        dialog.bind("<Escape>", close); dialog.protocol("WM_DELETE_WINDOW", close); choices.focus_set()
+
+    def create_library_playlist(self) -> None:
+        name = self._accessible_text_prompt("Create Playlist", "Playlist name")
+        if not name:
+            return
+        if name in self.library_playlists:
+            self.announce(f"Playlist {name} already exists."); return
+        self.library_playlists[name] = []; self._save_file_history(); self.announce(f"Created playlist {name}.")
+
+    def _choose_playlist_name(self, title: str) -> str | None:
+        names = sorted(self.library_playlists, key=str.casefold)
+        if not names:
+            self.announce("There are no playlists yet. Create one first."); return None
+        dialog = tk.Toplevel(self); dialog.title(title); dialog.transient(self); dialog.grab_set(); result: list[str] = []
+        tk.Label(dialog, text="Playlist list").pack(anchor="w", padx=12, pady=(12, 3))
+        choices = tk.Listbox(dialog, exportselection=False, height=min(12, len(names)), width=55, takefocus=True)
+        for name in names: choices.insert("end", name)
+        choices.selection_set(0); choices.activate(0); choices.pack(fill="both", expand=True, padx=12)
+        buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
+        def accept(event=None) -> str:
+            selected = choices.curselection()
+            if selected: result.append(names[selected[0]])
+            dialog.destroy(); return "break"
+        def close(event=None) -> str: dialog.destroy(); return "break"
+        choices.bind("<FocusIn>", lambda event: self.screen_reader.speak("Playlist list. Use arrows and press Enter."))
+        choices.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(choices.get(choices.curselection()[0])) if choices.curselection() else None)
+        choices.bind("<Return>", accept)
+        self.accessible_button(buttons, "Choose Playlist", accept).pack(side="left")
+        self.accessible_button(buttons, "Cancel", close).pack(side="right")
+        dialog.bind("<Escape>", close); dialog.protocol("WM_DELETE_WINDOW", close); choices.focus_set(); self.wait_window(dialog)
+        return result[0] if result else None
+
+    def add_current_to_playlist(self) -> None:
+        if not self.document or not os.path.isfile(self.document.source_path):
+            self.announce("Open a local song before adding it to a playlist."); return
+        name = self._choose_playlist_name("Add Current Song to Playlist")
+        if not name: return
+        path = os.path.abspath(self.document.source_path)
+        if path not in self.library_playlists[name]: self.library_playlists[name].append(path)
+        self._save_file_history(); self.announce(f"Added {os.path.basename(path)} to playlist {name}.")
+
+    def browse_playlists(self) -> None:
+        name = self._choose_playlist_name("Browse Playlists")
+        if name: self.browse_library(f"playlist {name}", self.library_playlists[name])
 
     def _choose_audio_file(self) -> str | None:
         dialog = tk.Toplevel(self)

@@ -152,6 +152,9 @@ class FileHistoryTests(unittest.TestCase):
             editor.online_download_sample_rate = 48000
             editor.online_download_bitrate = 128
             editor.last_open_directory = temp_folder
+            editor.workspace_mode = "library"
+            editor.library_files = [os.path.join(temp_folder, "library.flac")]
+            editor.library_playlists = {"Road Trip": [os.path.join(temp_folder, "favorite.flac")]}
             editor._save_file_history()
 
             restored = object.__new__(QuickEdit)
@@ -164,6 +167,9 @@ class FileHistoryTests(unittest.TestCase):
             self.assertEqual(restored.online_download_sample_rate, 48000)
             self.assertEqual(restored.online_download_bitrate, 128)
             self.assertEqual(restored.last_open_directory, temp_folder)
+            self.assertEqual(restored.workspace_mode, "library")
+            self.assertEqual(restored.library_files, editor.library_files)
+            self.assertEqual(restored.library_playlists, editor.library_playlists)
 
             with open(restored._history_path, "r", encoding="utf-8") as source:
                 self.assertIn("favorite_files", json.load(source))
