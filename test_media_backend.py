@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from media_backend import MediaBackend
 
@@ -49,6 +50,18 @@ class MediaEncodingTests(unittest.TestCase):
         backend.ffprobe = "ffprobe.exe"
         backend._run = lambda command: SimpleNamespace(stdout='{"format":{"tags":{"TITLE":"Example","Artist":"Someone"}}}')
         self.assertEqual(backend.read_metadata("song.mp3"), {"title": "Example", "artist": "Someone"})
+
+    @patch("media_backend.subprocess.Popen")
+    def test_streaming_playback_enables_rolling_cache(self, popen):
+        backend = object.__new__(MediaBackend)
+        backend.mpv = "mpv.exe"
+        process = SimpleNamespace()
+        popen.return_value = process
+        backend.start_playback("https://radio.example/stream", streaming=True)
+        command = popen.call_args.args[0]
+        self.assertIn("--cache=yes", command)
+        self.assertIn("--cache-secs=1800", command)
+        self.assertTrue(process.quickedit_ipc_path.startswith(r"\\.\pipe\quickedit-mpv-"))
 
 
 if __name__ == "__main__":

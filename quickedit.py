@@ -263,6 +263,8 @@ class QuickEdit(tk.Tk):
         self.workspace_mode = "editor"
         self.library_files: list[str] = []
         self.library_playlists: dict[str, list[str]] = {}
+        self.saved_streams: list[dict[str, str]] = []
+        self.current_saved_stream_index = -1
         self.navigation_step_index = self.NAVIGATION_STEPS.index(0.1)
         self.screen_reader = ScreenReaderAnnouncer()
         self._active_menu: tk.Menu | None = None
@@ -487,6 +489,13 @@ class QuickEdit(tk.Tk):
         streaming.add_command(label="Search SoundCloud", command=lambda: self.search_online("SoundCloud"))
         streaming.add_separator()
         streaming.add_command(label="Preview Direct URL or Radio Playlist", command=self.preview_direct_url)
+        streaming.add_command(label="Save Direct Link or Radio Station", command=self.save_direct_stream)
+        streaming.add_command(label="Saved Streams and Stations", command=self.browse_saved_streams)
+        streaming.add_command(label="Previous Saved Station\tCtrl+Alt+Left", command=lambda: self.play_adjacent_saved_stream(-1))
+        streaming.add_command(label="Next Saved Station\tCtrl+Alt+Right", command=lambda: self.play_adjacent_saved_stream(1))
+        streaming.add_separator()
+        streaming.add_command(label="Previous Radio Segment; Back 3 Minutes\tCtrl+Shift+Left", command=lambda: self.seek_radio_buffer(-180))
+        streaming.add_command(label="Next Radio Segment; Forward 3 Minutes\tCtrl+Shift+Right", command=lambda: self.seek_radio_buffer(180))
         streaming.add_command(label="Stop Streaming Preview", command=self.stop_direct_url_preview)
         streaming.add_command(label="Import Direct Link into Editor", command=self.import_online_link)
         streaming.add_command(label="Download Direct Link", command=self.download_online_link)
@@ -743,6 +752,14 @@ class QuickEdit(tk.Tk):
             callback = lambda: self.set_cursor_frame(0)
         elif key == "end":
             callback = lambda: self.set_cursor_frame(self.document.frame_count if self.document else 0)
+        elif key == "left" and control and alt:
+            callback = lambda: self.play_adjacent_saved_stream(-1)
+        elif key == "right" and control and alt:
+            callback = lambda: self.play_adjacent_saved_stream(1)
+        elif key == "left" and control and shift:
+            callback = lambda: self.seek_radio_buffer(-180)
+        elif key == "right" and control and shift:
+            callback = lambda: self.seek_radio_buffer(180)
         elif key == "left":
             amount = 1.0 if control else 5.0 if alt else self.navigation_step
             callback = lambda: self.move_cursor(-amount)
@@ -940,6 +957,8 @@ class QuickEdit(tk.Tk):
             self.library_files = [str(path) for path in settings.get("library_files", self.__dict__.get("library_files", []))]
             raw_playlists = settings.get("library_playlists", self.__dict__.get("library_playlists", {}))
             self.library_playlists = {str(name): [str(path) for path in paths] for name, paths in raw_playlists.items()} if isinstance(raw_playlists, dict) else {}
+            raw_streams = settings.get("saved_streams", self.__dict__.get("saved_streams", []))
+            self.saved_streams = [item for item in raw_streams if isinstance(item, dict) and item.get("url")]
         except (OSError, ValueError, TypeError):
             pass
 
@@ -961,6 +980,7 @@ class QuickEdit(tk.Tk):
             workspace_mode=self.__dict__.get("workspace_mode", "editor"),
             library_files=self.__dict__.get("library_files", []),
             library_playlists=self.__dict__.get("library_playlists", {}),
+            saved_streams=self.__dict__.get("saved_streams", []),
         )
         with open(self._history_path, "w", encoding="utf-8") as target:
             json.dump(settings, target, indent=2)
@@ -1416,13 +1436,73 @@ class QuickEdit(tk.Tk):
         url = simpledialog.askstring("Preview direct URL", "Media, stream, PLS, M3U, or M3U8 address:", parent=self)
         if not url:
             return
+        self._play_stream_url(url, "Direct URL")
+
+    def _play_stream_url(self, url: str, name: str) -> None:
         try:
             stream = self.online.preview_url(url)
             self.stop_direct_url_preview()
-            self.preview_process = self.media.start_playback(stream, self.output_device)
-            self.announce("Direct URL preview started.")
+            self.preview_process = self.media.start_playback(stream, self.output_device, streaming=True)
+            self.announce(f"Streaming {name}. A rolling buffer of up to 30 minutes is enabled when the station permits seeking.")
         except (MediaError, OSError) as exc:
             messagebox.showerror("Could not preview URL", str(exc), parent=self)
+
+    def save_direct_stream(self) -> None:
+        url = self._accessible_text_prompt("Save Stream or Station", "Stream, station, YouTube, or media URL")
+        if not url: return
+        name = self._accessible_text_prompt("Save Stream or Station", "Name for this saved stream")
+        if not name: return
+        self._save_stream_item(name, url, "Direct")
+
+    def _save_stream_item(self, name: str, url: str, provider: str) -> None:
+        normalized = url.strip()
+        self.saved_streams = [item for item in self.saved_streams if item.get("url") != normalized]
+        self.saved_streams.append({"name": name.strip() or normalized, "url": normalized, "provider": provider})
+        self._save_file_history(); self.announce(f"Saved {name} in Streams and Stations.")
+
+    def browse_saved_streams(self) -> None:
+        if not self.saved_streams:
+            self.announce("There are no saved streams or radio stations yet."); return
+        dialog = tk.Toplevel(self); dialog.title("Saved Streams and Stations"); dialog.transient(self); dialog.grab_set()
+        tk.Label(dialog, text="Saved streams and radio stations").pack(anchor="w", padx=12, pady=(12, 3))
+        choices = tk.Listbox(dialog, exportselection=False, height=min(18, len(self.saved_streams)), width=80, takefocus=True)
+        for item in self.saved_streams: choices.insert("end", f"{item['name']}; {item.get('provider', 'Direct')}")
+        choices.selection_set(0); choices.activate(0); choices.pack(fill="both", expand=True, padx=12)
+        buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
+        def play(event=None) -> str:
+            selected = choices.curselection()
+            if selected:
+                self.current_saved_stream_index = selected[0]; item = self.saved_streams[selected[0]]; dialog.destroy(); self._play_stream_url(item["url"], item["name"])
+            return "break"
+        def remove(event=None) -> str:
+            selected = choices.curselection()
+            if selected:
+                name = self.saved_streams[selected[0]]["name"]; del self.saved_streams[selected[0]]; self._save_file_history(); dialog.destroy(); self.announce(f"Removed saved stream {name}.")
+            return "break"
+        def close(event=None) -> str: dialog.destroy(); return "break"
+        choices.bind("<FocusIn>", lambda event: self.screen_reader.speak("Saved streams and stations list. Use arrows and press Enter to play."))
+        choices.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(choices.get(choices.curselection()[0])) if choices.curselection() else None)
+        choices.bind("<Return>", play)
+        self.accessible_button(buttons, "Play Saved Stream", play).pack(side="left")
+        self.accessible_button(buttons, "Remove Saved Stream", remove).pack(side="left", padx=8)
+        self.accessible_button(buttons, "Close", close).pack(side="right")
+        dialog.bind("<Escape>", close); dialog.protocol("WM_DELETE_WINDOW", close); choices.focus_set()
+
+    def play_adjacent_saved_stream(self, direction: int) -> None:
+        if not self.saved_streams:
+            self.announce("There are no saved stations."); return
+        self.current_saved_stream_index = (self.current_saved_stream_index + direction) % len(self.saved_streams)
+        item = self.saved_streams[self.current_saved_stream_index]
+        self._play_stream_url(item["url"], item["name"])
+
+    def seek_radio_buffer(self, seconds: float) -> None:
+        if not self.preview_process or self.preview_process.poll() is not None:
+            self.announce("No live station is playing."); return
+        if self.media.seek_playback_relative(self.preview_process, seconds):
+            direction = "back" if seconds < 0 else "forward"
+            self.announce(f"Moved {direction} {abs(seconds) / 60:g} minutes in the live radio buffer.")
+        else:
+            self.announce("This station or player does not permit buffered seeking.")
 
     def stop_direct_url_preview(self) -> None:
         if self.preview_process and self.preview_process.poll() is None:
@@ -1665,6 +1745,13 @@ class QuickEdit(tk.Tk):
                     self._download_online_result(item)
             return "break"
 
+        def save_selected(event=None) -> str:
+            item = current()
+            if item:
+                self._save_stream_item(item.title, item.url, item.provider)
+                self.screen_reader.speak(f"Saved {item.title} in Streams and Stations.")
+            return "break"
+
         def stop_online_preview() -> None:
             if self.preview_process and self.preview_process.poll() is None:
                 self.preview_process.terminate()
@@ -1677,6 +1764,7 @@ class QuickEdit(tk.Tk):
         choices.bind("<Shift-Return>", download_selected)
         self.accessible_button(action_buttons, "Import Selected Result", import_selected).pack(side="left")
         self.accessible_button(action_buttons, "Download Selected Result", download_selected).pack(side="left", padx=8)
+        self.accessible_button(action_buttons, "Save Selected Result", save_selected).pack(side="left", padx=8)
         if allow_preview:
             self.accessible_button(action_buttons, "Preview Selected Result", preview).pack(side="left", padx=8)
             self.accessible_button(action_buttons, "Stop Result Preview", stop_online_preview).pack(side="left")

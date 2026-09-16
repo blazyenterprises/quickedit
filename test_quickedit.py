@@ -155,6 +155,7 @@ class FileHistoryTests(unittest.TestCase):
             editor.workspace_mode = "library"
             editor.library_files = [os.path.join(temp_folder, "library.flac")]
             editor.library_playlists = {"Road Trip": [os.path.join(temp_folder, "favorite.flac")]}
+            editor.saved_streams = [{"name": "Example Radio", "url": "https://radio.example/stream", "provider": "Direct"}]
             editor._save_file_history()
 
             restored = object.__new__(QuickEdit)
@@ -170,6 +171,7 @@ class FileHistoryTests(unittest.TestCase):
             self.assertEqual(restored.workspace_mode, "library")
             self.assertEqual(restored.library_files, editor.library_files)
             self.assertEqual(restored.library_playlists, editor.library_playlists)
+            self.assertEqual(restored.saved_streams, editor.saved_streams)
 
             with open(restored._history_path, "r", encoding="utf-8") as source:
                 self.assertIn("favorite_files", json.load(source))
