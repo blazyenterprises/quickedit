@@ -476,9 +476,10 @@ class QuickEdit(tk.Tk):
         # One dispatcher is more reliable with screen readers than a collection
         # of Tk accelerator patterns, especially for arrows and OEM bracket keys.
         self.bind_all("<KeyPress>", self._dispatch_key, add="+")
-        self.bind_class("Menu", "<Home>", self._menu_home)
-        self.bind_class("Menu", "<End>", self._menu_end)
-        self.bind_class("Menu", "<KeyPress>", self._menu_first_letter)
+        # Do not replace Tk's Menu class bindings here. Every menu receives the
+        # extra Home, End, and first-letter handlers in _apply_menu_mnemonics;
+        # replacing the class binding removes native arrows, Enter, Escape, and
+        # submenu activation for screen-reader users.
 
     @staticmethod
     def _menu_selectable_indices(menu: tk.Menu) -> list[int]:
