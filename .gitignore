@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.builddeps/
+portable-build*/
+portable-dist*/
+build/
+dist/
+
+# Bundled release runtimes are too large for ordinary GitHub source history.
+# Attach packaged builds to GitHub Releases instead.
+runtime/
+ffmpeg.exe
+ffprobe.exe
+mpv.exe
+nvdaControllerClient64.dll
+
+# Local settings, credentials, media, and generated packages.
+*.dat
+*.zip
+*.wav
+*.mp3
+*.flac
+*.mid
+*.sf2
+*.sf3
