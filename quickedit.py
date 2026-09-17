@@ -4313,10 +4313,26 @@ class QuickEdit(tk.Tk):
                 return
             temporary_files.append(decoded)
             sample_path[0], decoded_sample_path[0], root_note[0] = path, decoded, root
-            instrument_mode[0] = "sample"
             waveform_list.selection_clear(0, "end")
             preset_list.selection_clear(0, "end")
-            status.set(f"Sample instrument: {os.path.basename(path)}. Root MIDI note {root}.")
+
+            def activate_loaded_sample() -> None:
+                instrument_mode[0] = "sample"
+                status.set(f"Sample instrument active: {os.path.basename(path)}. Root MIDI note {root}.")
+                self.screen_reader.speak(status.get())
+
+            # Listbox selection events are queued by Tk. Activate the sample
+            # after those events have drained so they cannot steal the mode.
+            dialog.after_idle(activate_loaded_sample)
+
+        def use_loaded_sample() -> None:
+            if not sample_path[0] or not decoded_sample_path[0] or not os.path.isfile(decoded_sample_path[0]):
+                self.screen_reader.speak("No sample is loaded. Choose a sample instrument first.")
+                return
+            waveform_list.selection_clear(0, "end")
+            preset_list.selection_clear(0, "end")
+            instrument_mode[0] = "sample"
+            status.set(f"Sample instrument active: {os.path.basename(sample_path[0])}. Root MIDI note {root_note[0]}.")
             self.screen_reader.speak(status.get())
 
         def use_builtin_synth() -> None:
@@ -4363,6 +4379,8 @@ class QuickEdit(tk.Tk):
 
         def waveform_changed(event=None) -> None:
             if not waveform_list.curselection(): return
+            if instrument_mode[0] == "sample":
+                return
             instrument_mode[0] = "synth"
             preset_list.selection_clear(0, "end")
             status.set(f"Built-in {selected_waveform()} synthesizer.")
@@ -4396,7 +4414,8 @@ class QuickEdit(tk.Tk):
                 self.media.render_midi(midi_path, soundfont_path[0], rendered, rate)
                 self.media.decode_to_format(rendered, path, rate, channels, width)
             else:
-                frames = signal_generator.generate_waveform(selected_waveform(), 440 * 2 ** ((note - 69) / 12), duration, rate, width, channels, -12)
+                synth_duration = min(duration, 3)
+                frames = signal_generator.generate_waveform(selected_waveform(), 440 * 2 ** ((note - 69) / 12), synth_duration, rate, width, channels, -12)
                 with wave.open(path, "wb") as target:
                     target.setnchannels(channels); target.setsampwidth(width); target.setframerate(rate); target.writeframes(frames)
             return path
@@ -4467,7 +4486,7 @@ class QuickEdit(tk.Tk):
                     path = sustained_note_path(note)
                     process = self.media.start_playback(
                         path, self.output_device, volume=self.playback_volume,
-                        loop=instrument_mode[0] == "sample",
+                        loop=instrument_mode[0] in {"sample", "synth"},
                     )
                     if process:
                         active_keys[key] = process
@@ -4509,6 +4528,7 @@ class QuickEdit(tk.Tk):
         preset_list.bind("<FocusIn>", lambda event: self.screen_reader.speak("SoundFont preset list. Choose SoundFont if no presets are loaded."))
         preset_list.bind("<<ListboxSelect>>", preset_changed)
         self.accessible_button(mode_buttons, "Choose Sample Instrument", choose_sample).pack(side="left")
+        self.accessible_button(mode_buttons, "Use Loaded Sample", use_loaded_sample).pack(side="left", padx=8)
         self.accessible_button(mode_buttons, "Use Built-in Synth", use_builtin_synth).pack(side="left", padx=8)
         self.accessible_button(mode_buttons, "Choose SoundFont", choose_keyboard_soundfont).pack(side="left", padx=8)
         self.accessible_button(octave_buttons, "Octave Down, Z", lambda: change_keyboard_octave(-1)).pack(side="left")
