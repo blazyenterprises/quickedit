@@ -4236,6 +4236,7 @@ class QuickEdit(tk.Tk):
         dialog.geometry("760x640")
         dialog.transient(self)
         sample_path = [""]
+        decoded_sample_path = [""]
         root_note = [60]
         soundfont_path = [self.soundfont_path or ""]
         soundfont_presets: list[Preset] = []
@@ -4251,6 +4252,7 @@ class QuickEdit(tk.Tk):
         status = tk.StringVar(value="Built-in sine synthesizer. A through K play white keys, W E T Y U play black keys, and Z or X changes octave.")
         tk.Label(dialog, textvariable=status, anchor="w", wraplength=580).pack(fill="x", padx=12, pady=8)
         octave_buttons = tk.Frame(dialog); octave_buttons.pack(fill="x", padx=12, pady=(0, 8))
+        mode_buttons = tk.Frame(dialog); mode_buttons.pack(fill="x", padx=12, pady=(0, 8))
         instrument_row = tk.Frame(dialog)
         instrument_row.pack(fill="x", padx=12, pady=(0, 8))
         waveform_column = tk.Frame(instrument_row)
@@ -4296,9 +4298,33 @@ class QuickEdit(tk.Tk):
             if not path: return
             root = self._ask_midi_note("Sample root note", "Sample root note. Enter G, C4, F sharp 3, B flat 2, or a MIDI number:")
             if root is None: return
-            sample_path[0], root_note[0] = path, root
+            document = self.document
+            rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
+            handle, decoded = tempfile.mkstemp(prefix="quickedit-sample-source-", suffix=".wav"); os.close(handle)
+            try:
+                self.media.decode_to_format(path, decoded, rate, channels, width)
+                with wave.open(decoded, "rb") as source:
+                    if source.getnframes() == 0:
+                        raise ValueError("The selected sample contains no audio.")
+            except (OSError, wave.Error, MediaError, ValueError) as exc:
+                try: os.remove(decoded)
+                except OSError: pass
+                messagebox.showerror("Could not load sample", str(exc), parent=dialog)
+                return
+            temporary_files.append(decoded)
+            sample_path[0], decoded_sample_path[0], root_note[0] = path, decoded, root
             instrument_mode[0] = "sample"
+            waveform_list.selection_clear(0, "end")
+            preset_list.selection_clear(0, "end")
             status.set(f"Sample instrument: {os.path.basename(path)}. Root MIDI note {root}.")
+            self.screen_reader.speak(status.get())
+
+        def use_builtin_synth() -> None:
+            if not waveform_list.curselection():
+                waveform_list.selection_set(0); waveform_list.activate(0); waveform_list.see(0)
+            preset_list.selection_clear(0, "end")
+            instrument_mode[0] = "synth"
+            status.set(f"Built-in {selected_waveform()} synthesizer.")
             self.screen_reader.speak(status.get())
 
         def load_soundfont(path: str) -> None:
@@ -4320,6 +4346,7 @@ class QuickEdit(tk.Tk):
             preset_list.activate(0)
             preset_list.see(0)
             instrument_mode[0] = "soundfont"
+            waveform_list.selection_clear(0, "end")
             self.soundfont_path = path
             self._save_file_history()
             status.set(f"SoundFont {os.path.basename(path)}; {len(presets)} presets available.")
@@ -4335,7 +4362,9 @@ class QuickEdit(tk.Tk):
                 load_soundfont(path)
 
         def waveform_changed(event=None) -> None:
+            if not waveform_list.curselection(): return
             instrument_mode[0] = "synth"
+            preset_list.selection_clear(0, "end")
             status.set(f"Built-in {selected_waveform()} synthesizer.")
             self.screen_reader.speak(status.get())
 
@@ -4343,6 +4372,7 @@ class QuickEdit(tk.Tk):
             index = selected_preset_index()
             if soundfont_path[0] and index >= 0:
                 instrument_mode[0] = "soundfont"
+                waveform_list.selection_clear(0, "end")
                 preset = soundfont_presets[index]
                 status.set(f"SoundFont preset {preset.name}; bank {preset.bank}, program {preset.program}.")
                 self.screen_reader.speak(status.get())
@@ -4353,11 +4383,8 @@ class QuickEdit(tk.Tk):
             handle, path = tempfile.mkstemp(prefix="quickedit-key-", suffix=".wav"); os.close(handle)
             temporary_files.append(path)
             if instrument_mode[0] == "sample" and sample_path[0]:
-                handle, decoded = tempfile.mkstemp(prefix="quickedit-sample-", suffix=".wav"); os.close(handle)
-                temporary_files.append(decoded)
-                self.media.decode_to_format(sample_path[0], decoded, rate, channels, width)
                 factor = 2 ** ((note - root_note[0]) / 12)
-                self.media.transform_wav(decoded, path, f"asetrate={rate}*{factor:.10g},aresample={rate}", width)
+                self.media.transform_wav(decoded_sample_path[0], path, f"asetrate={rate}*{factor:.10g},aresample={rate}", width)
             elif instrument_mode[0] == "soundfont" and soundfont_path[0] and selected_preset_index() >= 0:
                 preset = soundfont_presets[selected_preset_index()]
                 handle, midi_path = tempfile.mkstemp(prefix="quickedit-key-", suffix=".mid"); os.close(handle)
@@ -4481,8 +4508,9 @@ class QuickEdit(tk.Tk):
         waveform_list.bind("<<ListboxSelect>>", waveform_changed)
         preset_list.bind("<FocusIn>", lambda event: self.screen_reader.speak("SoundFont preset list. Choose SoundFont if no presets are loaded."))
         preset_list.bind("<<ListboxSelect>>", preset_changed)
-        self.accessible_button(buttons, "Choose Sample Instrument", choose_sample).pack(side="left")
-        self.accessible_button(buttons, "Choose SoundFont", choose_keyboard_soundfont).pack(side="left", padx=8)
+        self.accessible_button(mode_buttons, "Choose Sample Instrument", choose_sample).pack(side="left")
+        self.accessible_button(mode_buttons, "Use Built-in Synth", use_builtin_synth).pack(side="left", padx=8)
+        self.accessible_button(mode_buttons, "Choose SoundFont", choose_keyboard_soundfont).pack(side="left", padx=8)
         self.accessible_button(octave_buttons, "Octave Down, Z", lambda: change_keyboard_octave(-1)).pack(side="left")
         self.accessible_button(octave_buttons, "Octave Up, X", lambda: change_keyboard_octave(1)).pack(side="left", padx=8)
         self.accessible_button(buttons, "Preview Note", preview).pack(side="left", padx=8)
