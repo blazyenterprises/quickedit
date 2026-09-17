@@ -4,6 +4,7 @@ import copy
 import ctypes
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from theme_manager import ThemeManager
 import audio_effects
 import signal_generator
 from soundfont_tools import Preset, list_presets, one_note_midi
+from midi_sample_renderer import render_midi_with_sample
 
 # PyInstaller's Tk hook still points Python 3.14 at pre-3.14 library folders.
 # Tcl/Tk 9 carries its standard library in zipfs, so let it use that default.
@@ -265,6 +267,7 @@ class QuickEdit(tk.Tk):
         self.workspace_mode = "editor"
         self.library_files: list[str] = []
         self.library_playlists: dict[str, list[str]] = {}
+        self.library_sort_mode = "track"
         self.saved_streams: list[dict[str, str]] = []
         self.current_saved_stream_index = -1
         self.library_queue: list[str] = []
@@ -279,6 +282,7 @@ class QuickEdit(tk.Tk):
         self.status_var = tk.StringVar(value="Ready. Open a PCM WAV file with Control O.")
         self.details_var = tk.StringVar(value="No audio is open.")
         self.workspace_var = tk.StringVar(value=self.workspace_mode)
+        self.library_sort_var = tk.StringVar(value=self.library_sort_mode)
         self.workspace_heading_var = tk.StringVar(value={"editor": "Editor View", "library": "Library View", "daw": "DAW View"}[self.workspace_mode])
         self._build_menu()
         self._build_ui()
@@ -402,6 +406,7 @@ class QuickEdit(tk.Tk):
         midi_menu = tk.Menu(menu, tearoff=False)
         midi_menu.add_command(label="Choose SoundFont", command=self.choose_soundfont)
         midi_menu.add_command(label="Re-render MIDI with Current SoundFont", command=self.rerender_midi)
+        midi_menu.add_command(label="Render MIDI with One Sample", command=self.render_midi_with_one_sample)
         midi_menu.add_command(label="Virtual MIDI and Sample Keyboard", command=self.virtual_midi_keyboard)
         menu.add_cascade(label="MIDI and SoundFonts", menu=midi_menu)
 
@@ -473,6 +478,17 @@ class QuickEdit(tk.Tk):
         library.add_command(label="Create Playlist", command=self.create_library_playlist)
         library.add_command(label="Add Current Song to Playlist", command=self.add_current_to_playlist)
         library.add_command(label="Recently Opened", command=lambda: self.browse_library("recent"))
+        sort_menu = tk.Menu(library, tearoff=False)
+        for label, mode in (
+            ("Album, Disc, and Track Number", "track"),
+            ("Song Title Alphabetically", "title"),
+            ("Artist Alphabetically", "artist"),
+            ("Album Alphabetically", "album"),
+            ("Newest Added First", "added"),
+            ("Shuffle", "shuffle"),
+        ):
+            sort_menu.add_radiobutton(label=label, variable=self.library_sort_var, value=mode, command=lambda selected=mode: self.set_library_sort_mode(selected))
+        library.add_cascade(label="Sort and Shuffle Mode", menu=sort_menu)
         library.add_separator(); library.add_command(label="Exit", command=self.destroy)
         menu.add_cascade(label="Library", menu=library)
         playback = tk.Menu(menu, tearoff=False)
@@ -540,6 +556,7 @@ class QuickEdit(tk.Tk):
         instruments.add_command(label="Virtual MIDI and Sample Keyboard", command=self.virtual_midi_keyboard)
         instruments.add_command(label="Choose SoundFont", command=self.choose_soundfont)
         instruments.add_command(label="Re-render MIDI with Current SoundFont", command=self.rerender_midi)
+        instruments.add_command(label="Render MIDI with One Sample", command=self.render_midi_with_one_sample)
         instruments.add_separator()
         instruments.add_command(label="Open VST2 and VST3 Rack", command=self.open_carla_host)
         instruments.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
@@ -983,6 +1000,8 @@ class QuickEdit(tk.Tk):
             self.library_files = [str(path) for path in settings.get("library_files", self.__dict__.get("library_files", []))]
             raw_playlists = settings.get("library_playlists", self.__dict__.get("library_playlists", {}))
             self.library_playlists = {str(name): [str(path) for path in paths] for name, paths in raw_playlists.items()} if isinstance(raw_playlists, dict) else {}
+            sort_mode = str(settings.get("library_sort_mode", self.__dict__.get("library_sort_mode", "track")))
+            self.library_sort_mode = sort_mode if sort_mode in {"track", "title", "artist", "album", "added", "shuffle"} else "track"
             raw_streams = settings.get("saved_streams", self.__dict__.get("saved_streams", []))
             self.saved_streams = [item for item in raw_streams if isinstance(item, dict) and item.get("url")]
             soundfont_path = str(settings.get("soundfont_path", self.__dict__.get("soundfont_path", "")))
@@ -1008,6 +1027,7 @@ class QuickEdit(tk.Tk):
             workspace_mode=self.__dict__.get("workspace_mode", "editor"),
             library_files=self.__dict__.get("library_files", []),
             library_playlists=self.__dict__.get("library_playlists", {}),
+            library_sort_mode=self.__dict__.get("library_sort_mode", "track"),
             saved_streams=self.__dict__.get("saved_streams", []),
             soundfont_path=self.__dict__.get("soundfont_path") or "",
         )
@@ -1112,6 +1132,28 @@ class QuickEdit(tk.Tk):
             return album.casefold(), disc, track, title.casefold(), artist.casefold()
         return artist.casefold(), album.casefold(), disc, track, title.casefold()
 
+    def set_library_sort_mode(self, mode: str) -> None:
+        if mode not in {"track", "title", "artist", "album", "added", "shuffle"}:
+            return
+        self.library_sort_mode = mode
+        self.library_sort_var.set(mode)
+        self._save_file_history()
+        names = {"track": "album, disc, and track number", "title": "song title", "artist": "artist", "album": "album", "added": "newest added first", "shuffle": "shuffle"}
+        self.announce(f"Library ordering set to {names[mode]}.")
+
+    def _selected_library_sort_key(self, tags: dict[str, str], title: str, artist: str, album: str, added_index: int) -> tuple:
+        disc = self._metadata_number(tags.get("disc"), 1)
+        track = self._metadata_number(tags.get("track"), 1_000_000)
+        if self.library_sort_mode == "title":
+            return title.casefold(), artist.casefold(), album.casefold()
+        if self.library_sort_mode == "artist":
+            return artist.casefold(), album.casefold(), disc, track, title.casefold()
+        if self.library_sort_mode == "album":
+            return album.casefold(), disc, track, title.casefold(), artist.casefold()
+        if self.library_sort_mode == "added":
+            return (-added_index,)
+        return artist.casefold(), album.casefold(), disc, track, title.casefold()
+
     def browse_library(self, category: str, selected_paths: list[str] | None = None) -> None:
         if category == "recent":
             paths = [path for path in self.recent_files if os.path.isfile(path)]
@@ -1125,7 +1167,7 @@ class QuickEdit(tk.Tk):
             self.announce("This library section is empty. Use Add Audio Files to Library first.")
             return
         items = []
-        for path in paths:
+        for added_index, path in enumerate(paths):
             try: tags = self._normalized_metadata(self.media.read_metadata(path))
             except (OSError, MediaError): tags = {}
             title = tags.get("title") or os.path.splitext(os.path.basename(path))[0]
@@ -1134,8 +1176,13 @@ class QuickEdit(tk.Tk):
             if category == "artist": label = f"{artist}; {album}; track {track}; {title}"
             elif category == "album": label = f"{album}; track {track}; {title}; {artist}"
             else: label = f"Track {track}; {title}; {artist}; {album}"
-            items.append((label, path, self._library_sort_key(category, tags, title, artist, album)))
-        if category not in {"recent", "favorites", "playlist"} and selected_paths is None:
+            sort_key = self._selected_library_sort_key(tags, title, artist, album, added_index)
+            if self.library_sort_mode == "added" and category == "recent":
+                sort_key = (added_index,)
+            items.append((label, path, sort_key))
+        if self.library_sort_mode == "shuffle":
+            random.shuffle(items)
+        else:
             items.sort(key=lambda item: item[2])
         dialog = tk.Toplevel(self); dialog.title(f"Library {category.title()}"); dialog.geometry("760x520"); dialog.transient(self); dialog.grab_set()
         tk.Label(dialog, text=f"{category.title()} list").pack(anchor="w", padx=12, pady=(12, 3))
@@ -3820,6 +3867,60 @@ class QuickEdit(tk.Tk):
         self.refresh_details()
         self.announce(
             f"MIDI rendered with {os.path.basename(self.soundfont_path)}. Duration {format_time(document.duration)}."
+        )
+
+    def render_midi_with_one_sample(self) -> None:
+        document = self.document
+        if not document or not document.midi_path:
+            self.announce("Open a MIDI file before rendering it with a sample.")
+            return
+        sample_path = filedialog.askopenfilename(
+            title="Choose the sample that will play every MIDI note",
+            filetypes=[("Audio samples", "*.wav *.flac *.mp3 *.ogg *.opus *.m4a *.aiff *.aif *.au"), ("All files", "*.*")],
+            parent=self,
+        )
+        if not sample_path:
+            return
+        root_note = simpledialog.askinteger(
+            "Sample root note",
+            "Which MIDI note plays the sample at its original pitch? 60 is middle C:",
+            parent=self,
+            initialvalue=60,
+            minvalue=0,
+            maxvalue=127,
+        )
+        if root_note is None:
+            return
+        decoded_handle, decoded_path = tempfile.mkstemp(prefix="quickedit-sampler-source-", suffix=".wav")
+        rendered_handle, rendered_path = tempfile.mkstemp(prefix="quickedit-sampler-midi-", suffix=".wav")
+        os.close(decoded_handle); os.close(rendered_handle)
+        try:
+            self.media.decode_to_format(sample_path, decoded_path, document.frame_rate, document.channels, 2)
+            render_midi_with_sample(document.midi_path, decoded_path, rendered_path, root_note, document.frame_rate)
+            with wave.open(rendered_path, "rb") as source:
+                new_frames = source.readframes(source.getnframes())
+                channels, sample_width, frame_rate = source.getnchannels(), source.getsampwidth(), source.getframerate()
+        except (MediaError, wave.Error, OSError, ValueError) as exc:
+            messagebox.showerror("Could not render MIDI with sample", str(exc), parent=self)
+            return
+        finally:
+            for path in (decoded_path, rendered_path):
+                try: os.remove(path)
+                except OSError: pass
+        self.stop(announce=False)
+        self._checkpoint()
+        document.channels = channels
+        document.sample_width = sample_width
+        document.frame_rate = frame_rate
+        document.frames = new_frames
+        document.cursor_frame = 0
+        document.selection_start = None
+        document.selection_end = None
+        document.soundfont_path = None
+        document.save_path = None
+        self.refresh_details()
+        self.announce(
+            f"MIDI rendered polyphonically with {os.path.basename(sample_path)}. Every channel uses that sample. Duration {format_time(document.duration)}."
         )
 
     def toggle_recording(self) -> None:

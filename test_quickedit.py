@@ -162,6 +162,7 @@ class FileHistoryTests(unittest.TestCase):
             editor.workspace_mode = "library"
             editor.library_files = [os.path.join(temp_folder, "library.flac")]
             editor.library_playlists = {"Road Trip": [os.path.join(temp_folder, "favorite.flac")]}
+            editor.library_sort_mode = "shuffle"
             editor.saved_streams = [{"name": "Example Radio", "url": "https://radio.example/stream", "provider": "Direct"}]
             editor.soundfont_path = os.path.join(temp_folder, "remembered.sf2")
             with open(editor.soundfont_path, "wb") as soundfont:
@@ -181,6 +182,7 @@ class FileHistoryTests(unittest.TestCase):
             self.assertEqual(restored.workspace_mode, "library")
             self.assertEqual(restored.library_files, editor.library_files)
             self.assertEqual(restored.library_playlists, editor.library_playlists)
+            self.assertEqual(restored.library_sort_mode, "shuffle")
             self.assertEqual(restored.saved_streams, editor.saved_streams)
             self.assertEqual(restored.soundfont_path, editor.soundfont_path)
 
@@ -242,6 +244,18 @@ class EffectPresetTests(unittest.TestCase):
 
 
 class MetadataTests(unittest.TestCase):
+    def test_alphabetical_library_sort_modes(self):
+        editor = object.__new__(QuickEdit)
+        editor.library_sort_mode = "title"
+        alpha = editor._selected_library_sort_key({}, "Alpha", "Zed", "Second", 0)
+        beta = editor._selected_library_sort_key({}, "Beta", "Able", "First", 1)
+        self.assertLess(alpha, beta)
+        editor.library_sort_mode = "artist"
+        self.assertGreater(
+            editor._selected_library_sort_key({}, "Alpha", "Zed", "Second", 0),
+            editor._selected_library_sort_key({}, "Beta", "Able", "First", 1),
+        )
+
     def test_library_track_sort_is_numeric(self):
         track_two = QuickEdit._library_sort_key(
             "album", {"disc": "1/1", "track": "2/12"}, "Second", "Artist", "Album"
