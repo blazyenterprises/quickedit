@@ -63,6 +63,23 @@ class MediaEncodingTests(unittest.TestCase):
         self.assertIn("--cache-secs=1800", command)
         self.assertTrue(process.quickedit_ipc_path.startswith(r"\\.\pipe\quickedit-mpv-"))
 
+    @patch("media_backend.subprocess.Popen")
+    def test_normal_speed_bypasses_pitch_correction_filter(self, popen):
+        backend = object.__new__(MediaBackend)
+        backend.mpv = "mpv.exe"
+        popen.return_value = SimpleNamespace()
+        backend.start_playback("imported.wav")
+        self.assertIn("--speed=1", popen.call_args.args[0])
+        self.assertIn("--audio-pitch-correction=no", popen.call_args.args[0])
+
+    @patch("media_backend.subprocess.Popen")
+    def test_changed_speed_preserves_pitch(self, popen):
+        backend = object.__new__(MediaBackend)
+        backend.mpv = "mpv.exe"
+        popen.return_value = SimpleNamespace()
+        backend.start_playback("imported.wav", speed=1.25)
+        self.assertIn("--audio-pitch-correction=yes", popen.call_args.args[0])
+
     def test_volume_control_uses_mpv_property(self):
         backend = object.__new__(MediaBackend)
         commands = []

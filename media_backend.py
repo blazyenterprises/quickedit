@@ -277,11 +277,16 @@ class MediaBackend:
             return None
         ipc_path = rf"\\.\pipe\quickedit-mpv-{uuid.uuid4().hex}"
         streaming_options = ["--cache=yes", "--cache-secs=1800", "--demuxer-max-back-bytes=512MiB", "--cache-pause=no"] if streaming else []
+        # Do not put neutral playback through mpv's time-stretch filter. Some
+        # Windows audio devices expose a small but audible pitch offset when
+        # that filter is forced on at exactly 1.0 speed. Enable it only when
+        # QuickEdit is deliberately changing playback speed.
+        pitch_correction = "yes" if abs(speed - 1.0) > 1e-9 else "no"
         process = subprocess.Popen(
             [
                 self.mpv, "--no-config", "--no-video", "--really-quiet",
                 f"--audio-device={output_device}", f"--speed={speed:.8g}", f"--volume={volume}",
-                "--audio-pitch-correction=yes", f"--input-ipc-server={ipc_path}", *streaming_options, wav_path,
+                f"--audio-pitch-correction={pitch_correction}", f"--input-ipc-server={ipc_path}", *streaming_options, wav_path,
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
