@@ -27,6 +27,7 @@ from midi_sample_renderer import filter_midi_channels, render_midi_with_sample
 from waveout_player import play_wave
 import cd_burner
 import vst_backend
+import vst2_backend
 import tts_backend
 
 # PyInstaller's Tk hook still points Python 3.14 at pre-3.14 library folders.
@@ -466,10 +467,10 @@ class QuickEdit(tk.Tk):
         menu.add_cascade(label="MIDI and SoundFonts", menu=midi_menu)
 
         plugins = tk.Menu(menu, tearoff=False)
-        plugins.add_command(label="Open Accessible VST3 Editor", command=self.open_accessible_vst_editor)
+        plugins.add_command(label="Open Accessible VST2 or VST3 Editor", command=self.open_accessible_vst_editor)
         plugins.add_command(label="Open Legacy Carla Graphical Rack", command=self.open_carla_host)
         plugins.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
-        plugins.add_command(label="Configure, Preview, or Apply VST3", command=self.open_accessible_vst_editor)
+        plugins.add_command(label="Configure, Preview, or Apply VST2 or VST3", command=self.open_accessible_vst_editor)
         menu.add_cascade(label="VST Plug-ins", menu=plugins)
         file_menu.add_command(label="Burn Audio CD", command=self.burn_audio_cd)
 
@@ -626,10 +627,10 @@ class QuickEdit(tk.Tk):
         instruments.add_command(label="Render MIDI with One Sample", command=self.render_midi_with_one_sample)
         instruments.add_command(label="Mute or Unmute MIDI Channels", command=self.configure_midi_channels)
         instruments.add_separator()
-        instruments.add_command(label="Open Accessible VST3 Editor", command=self.open_accessible_vst_editor)
+        instruments.add_command(label="Open Accessible VST2 or VST3 Editor", command=self.open_accessible_vst_editor)
         instruments.add_command(label="Open Legacy Carla Graphical Rack", command=self.open_carla_host)
         instruments.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
-        instruments.add_command(label="Configure, Preview, or Apply VST3", command=self.open_accessible_vst_editor)
+        instruments.add_command(label="Configure, Preview, or Apply VST2 or VST3", command=self.open_accessible_vst_editor)
         instruments.add_command(label="Burn Audio CD", command=self.burn_audio_cd)
         menu.add_cascade(label="Instruments and Plug-ins", menu=instruments)
         create = tk.Menu(menu, tearoff=False)
@@ -4258,21 +4259,23 @@ class QuickEdit(tk.Tk):
 
     def open_accessible_vst_editor(self) -> None:
         plugin_path = filedialog.askopenfilename(
-            title="Choose a VST3 plug-in",
-            filetypes=[("VST3 plug-ins", "*.vst3"), ("All files", "*.*")],
+            title="Choose a VST2 or VST3 plug-in",
+            filetypes=[("VST2 and VST3 plug-ins", "*.dll *.vst3"), ("VST2 plug-ins", "*.dll"), ("VST3 plug-ins", "*.vst3"), ("All files", "*.*")],
             parent=self,
         )
         if not plugin_path:
             return
+        plugin_format = "VST2" if os.path.splitext(plugin_path)[1].lower() == ".dll" else "VST3"
+        backend = vst2_backend if plugin_format == "VST2" else vst_backend
         try:
-            plugin_name, parameters = vst_backend.plugin_parameters(plugin_path)
+            plugin_name, parameters = backend.plugin_parameters(plugin_path)
         except Exception as exc:
             messagebox.showerror("Could not load VST3 plug-in", str(exc), parent=self)
             return
         values = {str(item["key"]): float(item["raw"]) for item in parameters}
         defaults = dict(values)
         dialog = tk.Toplevel(self)
-        dialog.title(f"Accessible VST3 Editor - {plugin_name}")
+        dialog.title(f"Accessible {plugin_format} Editor - {plugin_name}")
         dialog.geometry("760x520")
         dialog.transient(self)
         tk.Label(dialog, text=f"{plugin_name} parameter list. Values are normalized control positions from 0 through 100 percent.").pack(anchor="w", padx=12, pady=(12, 4))
@@ -4342,9 +4345,9 @@ class QuickEdit(tk.Tk):
         self.accessible_button(adjustment_buttons, "Increase Selected Parameter by 10 Percent", lambda: adjust(0.10)).pack(side="left")
         action_buttons = tk.Frame(dialog); action_buttons.pack(fill="x", padx=12, pady=(4, 12))
         self.accessible_button(action_buttons, "Reset Selected Parameter to Plug-in Default", reset_parameter).pack(side="left")
-        self.accessible_button(action_buttons, "Preview VST3 on Selection", preview_plugin).pack(side="left", padx=5)
-        self.accessible_button(action_buttons, "Apply VST3 to Selection", apply_plugin).pack(side="left")
-        self.accessible_button(action_buttons, "Close VST3 Editor", dialog.destroy).pack(side="right")
+        self.accessible_button(action_buttons, f"Preview {plugin_format} on Selection", preview_plugin).pack(side="left", padx=5)
+        self.accessible_button(action_buttons, f"Apply {plugin_format} to Selection", apply_plugin).pack(side="left")
+        self.accessible_button(action_buttons, f"Close {plugin_format} Editor", dialog.destroy).pack(side="right")
         parameter_list.bind("<<ListboxSelect>>", lambda event: refresh(speak=True))
         parameter_list.bind("<Left>", lambda event: adjust(-0.01))
         parameter_list.bind("<Right>", lambda event: adjust(0.01))
@@ -4386,10 +4389,11 @@ class QuickEdit(tk.Tk):
             with wave.open(source_path, "wb") as target:
                 target.setnchannels(document.channels); target.setsampwidth(document.sample_width); target.setframerate(document.frame_rate)
                 target.writeframes(document.slice_bytes(start, end))
-            vst_backend.render_plugin(plugin_path, source_path, result_path, parameter_values)
+            backend = vst2_backend if os.path.splitext(plugin_path)[1].lower() == ".dll" else vst_backend
+            backend.render_plugin(plugin_path, source_path, result_path, parameter_values)
             with wave.open(result_path, "rb") as rendered:
                 frames = rendered.readframes(rendered.getnframes())
-            name = vst_backend.plugin_name(plugin_path)
+            name = vst2_backend.plugin_parameters(plugin_path)[0] if backend is vst2_backend else vst_backend.plugin_name(plugin_path)
             if preview:
                 self.stop_effect_preview(); self.effect_preview_files.update((source_path, result_path))
                 self.preview_process = self.media.start_playback(result_path, self.output_device, volume=self.playback_volume)
