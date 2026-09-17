@@ -293,6 +293,7 @@ class QuickEdit(tk.Tk):
         self.soundfont_path: str | None = None
         self.keyboard_sample_path: str | None = None
         self.keyboard_sample_root = 60
+        self.keyboard_instrument_mode = "synth"
         self.export_sample_rate: int | None = None
         self.export_bit_depth: int | None = None
         self.export_channels: int | None = None
@@ -1134,6 +1135,45 @@ class QuickEdit(tk.Tk):
             return
         self._open_path(path)
 
+    def _choose_midi_render_source(self) -> str | None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Choose MIDI instrument source")
+        dialog.transient(self)
+        dialog.grab_set()
+        result: list[str] = []
+        tk.Label(dialog, text="How should QuickEdit render this MIDI file?").pack(anchor="w", padx=12, pady=(12, 4))
+        choices = tk.Listbox(dialog, exportselection=False, height=2, width=72, takefocus=True)
+        soundfont_name = os.path.basename(self.soundfont_path) if self.soundfont_path else "choose a SoundFont next"
+        choices.insert("end", f"SoundFont; currently {soundfont_name}")
+        choices.insert("end", "Sample file; use one audio sample for every MIDI note")
+        choices.selection_set(0)
+        choices.activate(0)
+        choices.pack(fill="both", expand=True, padx=12)
+        buttons = tk.Frame(dialog)
+        buttons.pack(fill="x", padx=12, pady=12)
+
+        def accept(event=None) -> str:
+            selected = choices.curselection()
+            if selected:
+                result.append("soundfont" if selected[0] == 0 else "sample")
+            dialog.destroy()
+            return "break"
+
+        def cancel(event=None) -> str:
+            dialog.destroy()
+            return "break"
+
+        choices.bind("<FocusIn>", lambda event: self.screen_reader.speak("MIDI instrument source. Use arrows and press Enter."))
+        choices.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(choices.get(choices.curselection()[0])) if choices.curselection() else None)
+        choices.bind("<Return>", accept)
+        self.accessible_button(buttons, "Use Selected Instrument Source", accept).pack(side="left")
+        self.accessible_button(buttons, "Cancel MIDI Open", cancel).pack(side="right")
+        dialog.bind("<Escape>", cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        choices.focus_set()
+        self.wait_window(dialog)
+        return result[0] if result else None
+
     def _open_path(self, path: str) -> None:
         if not os.path.isfile(path):
             self.announce(f"File not found: {os.path.basename(path)}.")
@@ -1147,14 +1187,51 @@ class QuickEdit(tk.Tk):
             decoded_path = path
             temporary = None
             if extension in {".mid", ".midi"}:
-                if not self.soundfont_path:
-                    self.choose_soundfont(rerender=False)
-                if not self.soundfont_path:
-                    self.announce("MIDI was not opened because no SoundFont was selected.")
+                renderer = self._choose_midi_render_source()
+                if renderer is None:
+                    self.announce("MIDI open canceled.")
                     return
                 handle, temporary = tempfile.mkstemp(prefix="quickedit-import-", suffix=".wav")
                 os.close(handle)
-                self.media.render_midi(path, self.soundfont_path, temporary)
+                if renderer == "soundfont":
+                    if not self.soundfont_path:
+                        self.choose_soundfont(rerender=False)
+                    if not self.soundfont_path:
+                        os.remove(temporary)
+                        self.announce("MIDI open canceled because no SoundFont was selected.")
+                        return
+                    self.media.render_midi(path, self.soundfont_path, temporary)
+                else:
+                    sample_path = filedialog.askopenfilename(
+                        title="Choose the sample that will play every MIDI note",
+                        initialdir=os.path.dirname(self.keyboard_sample_path) if self.keyboard_sample_path else None,
+                        filetypes=[("Audio samples", "*.wav *.flac *.mp3 *.ogg *.opus *.m4a *.aiff *.aif *.au"), ("All files", "*.*")],
+                        parent=self,
+                    )
+                    if not sample_path:
+                        os.remove(temporary)
+                        self.announce("MIDI open canceled because no sample was selected.")
+                        return
+                    root = self._ask_midi_note(
+                        "Sample root note",
+                        "Which note plays the sample at its original pitch? Enter G, C4, F sharp 3, B flat 2, or a MIDI number:",
+                    )
+                    if root is None:
+                        os.remove(temporary)
+                        self.announce("MIDI open canceled because no sample root note was entered.")
+                        return
+                    decoded_handle, decoded_sample = tempfile.mkstemp(prefix="quickedit-midi-sample-", suffix=".wav")
+                    os.close(decoded_handle)
+                    try:
+                        self.media.decode_to_format(sample_path, decoded_sample, 44100, 1, 2)
+                        render_midi_with_sample(path, decoded_sample, temporary, root, 44100, self.muted_midi_channels)
+                    finally:
+                        if os.path.isfile(decoded_sample):
+                            os.remove(decoded_sample)
+                    self.keyboard_sample_path = sample_path
+                    self.keyboard_sample_root = root
+                    self.keyboard_instrument_mode = "sample"
+                    self._save_file_history()
                 decoded_path = temporary
                 source = wave.open(decoded_path, "rb")
             else:
@@ -1177,7 +1254,7 @@ class QuickEdit(tk.Tk):
                     source_path=path,
                     save_path=path if os.path.splitext(path)[1].lower() == ".wav" else None,
                     midi_path=path if extension in {".mid", ".midi"} else None,
-                    soundfont_path=self.soundfont_path if extension in {".mid", ".midi"} else None,
+                    soundfont_path=self.soundfont_path if extension in {".mid", ".midi"} and renderer == "soundfont" else None,
                     metadata=self._normalized_metadata(self.media.read_metadata(path)) if extension not in {".mid", ".midi"} else {},
                 )
             if temporary:
@@ -1228,6 +1305,8 @@ class QuickEdit(tk.Tk):
             keyboard_sample_path = str(settings.get("keyboard_sample_path", self.__dict__.get("keyboard_sample_path", "")))
             self.keyboard_sample_path = keyboard_sample_path if os.path.isfile(keyboard_sample_path) else None
             self.keyboard_sample_root = max(0, min(127, int(settings.get("keyboard_sample_root", self.__dict__.get("keyboard_sample_root", 60)))))
+            keyboard_mode = str(settings.get("keyboard_instrument_mode", self.__dict__.get("keyboard_instrument_mode", "synth")))
+            self.keyboard_instrument_mode = keyboard_mode if keyboard_mode in {"synth", "sample", "soundfont"} else "synth"
         except (OSError, ValueError, TypeError):
             pass
 
@@ -1256,6 +1335,7 @@ class QuickEdit(tk.Tk):
             soundfont_path=self.__dict__.get("soundfont_path") or "",
             keyboard_sample_path=self.__dict__.get("keyboard_sample_path") or "",
             keyboard_sample_root=self.__dict__.get("keyboard_sample_root", 60),
+            keyboard_instrument_mode=self.__dict__.get("keyboard_instrument_mode", "synth"),
         )
         with open(self._history_path, "w", encoding="utf-8") as target:
             json.dump(settings, target, indent=2)
@@ -4247,7 +4327,11 @@ class QuickEdit(tk.Tk):
         root_note = [self.keyboard_sample_root]
         soundfont_path = [self.soundfont_path or ""]
         soundfont_presets: list[Preset] = []
-        instrument_mode = ["synth"]
+        instrument_mode = [self.keyboard_instrument_mode]
+        if instrument_mode[0] == "sample" and not sample_path[0]:
+            instrument_mode[0] = "soundfont" if soundfont_path[0] else "synth"
+        if instrument_mode[0] == "soundfont" and not soundfont_path[0]:
+            instrument_mode[0] = "sample" if sample_path[0] else "synth"
         temporary_files: list[str] = []
         preview_processes: list[subprocess.Popen] = []
         active_keys: dict[str, subprocess.Popen] = {}
@@ -4302,7 +4386,7 @@ class QuickEdit(tk.Tk):
             selected = preset_list.curselection()
             return selected[0] if selected and selected[0] < len(soundfont_presets) else -1
 
-        def load_sample(path: str, root: int, announce: bool = True) -> bool:
+        def load_sample(path: str, root: int, announce: bool = True, activate: bool = True) -> bool:
             document = self.document
             rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
             handle, decoded = tempfile.mkstemp(prefix="quickedit-sample-source-", suffix=".wav"); os.close(handle)
@@ -4322,11 +4406,15 @@ class QuickEdit(tk.Tk):
             self.keyboard_sample_path = path
             self.keyboard_sample_root = root
             self._save_file_history()
+            if not activate:
+                return True
             waveform_list.selection_clear(0, "end")
             preset_list.selection_clear(0, "end")
 
             def activate_loaded_sample() -> None:
                 instrument_mode[0] = "sample"
+                self.keyboard_instrument_mode = "sample"
+                self._save_file_history()
                 status.set(f"Sample instrument active: {os.path.basename(path)}. Root MIDI note {root}.")
                 note_list.focus_set()
                 self.screen_reader.speak(status.get())
@@ -4350,6 +4438,8 @@ class QuickEdit(tk.Tk):
             waveform_list.selection_clear(0, "end")
             preset_list.selection_clear(0, "end")
             instrument_mode[0] = "sample"
+            self.keyboard_instrument_mode = "sample"
+            self._save_file_history()
             status.set(f"Sample instrument active: {os.path.basename(sample_path[0])}. Root MIDI note {root_note[0]}.")
             self.screen_reader.speak(status.get())
 
@@ -4358,6 +4448,8 @@ class QuickEdit(tk.Tk):
                 waveform_list.selection_set(0); waveform_list.activate(0); waveform_list.see(0)
             preset_list.selection_clear(0, "end")
             instrument_mode[0] = "synth"
+            self.keyboard_instrument_mode = "synth"
+            self._save_file_history()
             status.set(f"Built-in {selected_waveform()} synthesizer.")
             self.screen_reader.speak(status.get())
 
@@ -4382,6 +4474,7 @@ class QuickEdit(tk.Tk):
             instrument_mode[0] = "soundfont"
             waveform_list.selection_clear(0, "end")
             self.soundfont_path = path
+            self.keyboard_instrument_mode = "soundfont"
             self._save_file_history()
             status.set(f"SoundFont {os.path.basename(path)}; {len(presets)} presets available.")
             self.screen_reader.speak(status.get())
@@ -4400,6 +4493,8 @@ class QuickEdit(tk.Tk):
             if instrument_mode[0] == "sample":
                 return
             instrument_mode[0] = "synth"
+            self.keyboard_instrument_mode = "synth"
+            self._save_file_history()
             preset_list.selection_clear(0, "end")
             status.set(f"Built-in {selected_waveform()} synthesizer.")
             self.screen_reader.speak(status.get())
@@ -4408,6 +4503,8 @@ class QuickEdit(tk.Tk):
             index = selected_preset_index()
             if soundfont_path[0] and index >= 0:
                 instrument_mode[0] = "soundfont"
+                self.keyboard_instrument_mode = "soundfont"
+                self._save_file_history()
                 waveform_list.selection_clear(0, "end")
                 preset = soundfont_presets[index]
                 status.set(f"SoundFont preset {preset.name}; bank {preset.bank}, program {preset.program}.")
@@ -4588,9 +4685,11 @@ class QuickEdit(tk.Tk):
         bind_playable_keys(dialog)
         dialog.protocol("WM_DELETE_WINDOW", close)
         if sample_path[0] and os.path.isfile(sample_path[0]):
-            load_sample(sample_path[0], root_note[0], announce=False)
-        elif soundfont_path[0]:
+            load_sample(sample_path[0], root_note[0], announce=False, activate=instrument_mode[0] == "sample")
+        if instrument_mode[0] == "soundfont" and soundfont_path[0]:
             load_soundfont(soundfont_path[0])
+        elif instrument_mode[0] == "synth":
+            use_builtin_synth()
         note_list.focus_set()
 
     def choose_soundfont(self, rerender: bool = True) -> None:
