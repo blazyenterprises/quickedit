@@ -919,17 +919,20 @@ class QuickEdit(tk.Tk):
         if not protected:
             def announce_caret(event) -> None:
                 key = event.keysym.lower()
-                def speak_after_movement() -> None:
-                    try:
-                        value = str(variable.get())
-                        position = int(entry.index(tk.INSERT))
-                        spoken = self._entry_navigation_text(value, position, key)
-                        if spoken: self.screen_reader.speak(spoken)
-                    except tk.TclError:
-                        pass
-                self.after_idle(speak_after_movement)
-            for sequence in ("<KeyRelease-Left>", "<KeyRelease-Right>", "<KeyRelease-Home>", "<KeyRelease-End>"):
+                try:
+                    value = str(variable.get())
+                    position = int(entry.index(tk.INSERT))
+                    spoken = self._entry_navigation_text(value, position, key)
+                    if spoken: self.screen_reader.speak(spoken)
+                except tk.TclError:
+                    pass
+            for sequence in ("<KeyPress-Left>", "<KeyPress-Right>", "<KeyPress-Home>", "<KeyPress-End>"):
                 entry.bind(sequence, announce_caret, add="+")
+            def announce_line(event=None) -> None:
+                value = str(variable.get())
+                self.screen_reader.speak(value or "blank")
+            entry.bind("<KeyPress-Up>", announce_line, add="+")
+            entry.bind("<KeyPress-Down>", announce_line, add="+")
 
     @staticmethod
     def _entry_navigation_text(value: str, position: int, key: str) -> str:
@@ -937,7 +940,10 @@ class QuickEdit(tk.Tk):
             return "beginning"
         if key == "end" or position >= len(value) and key == "right":
             return "end"
-        index = position if key == "left" else position - 1
+        # Tk reports the insertion position before its class binding completes
+        # on the portable build, so announce the character the arrow is about
+        # to cross: behind the caret for Left, ahead for Right.
+        index = position - 1 if key == "left" else position
         if not 0 <= index < len(value):
             return "beginning" if position <= 0 else "end"
         character = value[index]
