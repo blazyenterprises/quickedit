@@ -1,5 +1,7 @@
 # QuickEdit
 
+QuickEdit is a Blazy Enterprises product.
+
 QuickEdit is a keyboard-first, screen-reader-friendly audio editor and audio
 workbench for Windows.
 
@@ -229,7 +231,7 @@ can preserve duration or behave like tape and change duration with pitch. The
 Effects menu separately provides permanent speed change with pitch preserved,
 pitch change with speed preserved, and linked tape-style pitch and speed.
 
-These are prototype defaults, not permanent decisions. A later build will make
+These are the initial defaults, not permanent decisions. A later build will make
 the full command map editable, following ApricotPlayer's useful model of
 assigning shortcuts by action rather than hard-wiring them throughout the UI.
 

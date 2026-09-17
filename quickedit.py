@@ -692,7 +692,7 @@ class QuickEdit(tk.Tk):
         tk.Label(frame, textvariable=self.workspace_heading_var, font=("Segoe UI", 13, "bold")).pack(anchor="w")
         tk.Label(
             frame,
-            text="Keyboard-first audio editing prototype",
+            text="A Blazy Enterprises audio workbench",
             font=("Segoe UI", 11),
         ).pack(anchor="w", pady=(0, 18))
         details = tk.Label(
@@ -1068,7 +1068,7 @@ class QuickEdit(tk.Tk):
                     source = wave.open(decoded_path, "rb")
             with source:
                 if source.getcomptype() != "NONE":
-                    raise ValueError("This prototype supports uncompressed PCM WAV files only.")
+                    raise ValueError("This operation supports uncompressed PCM WAV files only.")
                 document = AudioDocument(
                     channels=source.getnchannels(),
                     sample_width=source.getsampwidth(),
