@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from quickedit import AudioDocument, QuickEdit, format_time, matching_path_index, next_prefix_index, parse_time
+from quickedit import AudioDocument, QuickEdit, format_time, matching_path_index, next_prefix_index, parse_midi_note, parse_time
 
 
 class TimeTests(unittest.TestCase):
@@ -23,6 +23,23 @@ class TimeTests(unittest.TestCase):
             parse_time("one minute")
         with self.assertRaises(ValueError):
             parse_time("-1")
+
+
+class MidiNoteNameTests(unittest.TestCase):
+    def test_bare_note_defaults_to_octave_four(self):
+        self.assertEqual(parse_midi_note("G"), 67)
+
+    def test_note_names_accept_accidentals_and_octaves(self):
+        self.assertEqual(parse_midi_note("F#3"), 54)
+        self.assertEqual(parse_midi_note("B flat 2"), 46)
+        self.assertEqual(parse_midi_note("C4"), 60)
+
+    def test_midi_number_is_still_accepted(self):
+        self.assertEqual(parse_midi_note("60"), 60)
+
+    def test_invalid_note_is_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_midi_note("H sharp 9")
 
 
 class BatchConversionTests(unittest.TestCase):

@@ -139,6 +139,26 @@ def matching_path_index(entries: list[tuple[str, bool]], selected_path: str | No
     )
 
 
+def parse_midi_note(value: str, default_octave: int = 4) -> int:
+    """Parse a MIDI number or a note name such as G, F#3, or B flat 2."""
+    text = value.strip()
+    if re.fullmatch(r"\d+", text):
+        note = int(text)
+    else:
+        normalized = re.sub(r"\s+", "", text.lower().replace("sharp", "#").replace("flat", "b"))
+        match = re.fullmatch(r"([a-g])([#b]?)(-?\d+)?", normalized)
+        if not match:
+            raise ValueError("Enter a MIDI number or note name such as G, C4, F sharp 3, or B flat 2.")
+        name, accidental, octave_text = match.groups()
+        semitone = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}[name]
+        semitone += 1 if accidental == "#" else -1 if accidental == "b" else 0
+        octave = int(octave_text) if octave_text is not None else default_octave
+        note = (octave + 1) * 12 + semitone
+    if not 0 <= note <= 127:
+        raise ValueError("The note must be within the MIDI range from 0 through 127.")
+    return note
+
+
 @dataclass
 class AudioDocument:
     channels: int
@@ -2868,6 +2888,17 @@ class QuickEdit(tk.Tk):
         entry.focus_set(); self.wait_window(dialog)
         return result[0] if result else None
 
+    def _ask_midi_note(self, title: str, prompt: str, initial: str = "C4") -> int | None:
+        while True:
+            value = self._accessible_text_prompt(title, prompt, initial)
+            if value is None:
+                return None
+            try:
+                return parse_midi_note(value)
+            except ValueError as exc:
+                messagebox.showerror("Invalid note", str(exc), parent=self)
+                initial = value
+
     def _parse_effect_values(self, fields, values, entries) -> dict[str, float] | None:
         parsed = {}
         for key, label, default, minimum, maximum in fields:
@@ -4216,8 +4247,10 @@ class QuickEdit(tk.Tk):
         note_names = ("C", "C sharp", "D", "E flat", "E", "F", "F sharp", "G", "A flat", "A", "B flat", "B")
         notes = list(range(36, 85))
         waveforms = ("sine", "square", "triangle", "sawtooth", "white noise", "pink noise")
-        status = tk.StringVar(value="Built-in sine synthesizer. Space previews; Enter inserts the note.")
+        keyboard_octave = [60]
+        status = tk.StringVar(value="Built-in sine synthesizer. A through K play white keys, W E T Y U play black keys, and Z or X changes octave.")
         tk.Label(dialog, textvariable=status, anchor="w", wraplength=580).pack(fill="x", padx=12, pady=8)
+        octave_buttons = tk.Frame(dialog); octave_buttons.pack(fill="x", padx=12, pady=(0, 8))
         instrument_row = tk.Frame(dialog)
         instrument_row.pack(fill="x", padx=12, pady=(0, 8))
         waveform_column = tk.Frame(instrument_row)
@@ -4261,7 +4294,7 @@ class QuickEdit(tk.Tk):
         def choose_sample() -> None:
             path = filedialog.askopenfilename(title="Choose a sample for the keyboard", parent=dialog)
             if not path: return
-            root = simpledialog.askinteger("Sample root note", "MIDI root note; 60 is middle C:", parent=dialog, initialvalue=60, minvalue=0, maxvalue=127)
+            root = self._ask_midi_note("Sample root note", "Sample root note. Enter G, C4, F sharp 3, B flat 2, or a MIDI number:")
             if root is None: return
             sample_path[0], root_note[0] = path, root
             instrument_mode[0] = "sample"
@@ -4366,7 +4399,14 @@ class QuickEdit(tk.Tk):
                 messagebox.showerror("Could not insert keyboard note", str(exc), parent=dialog)
             return "break"
 
-        key_mapping = {key: offset for offset, key in enumerate("awsedftgyhuj")}
+        key_mapping = {"a": 0, "w": 1, "s": 2, "e": 3, "d": 4, "f": 5, "t": 6,
+                       "g": 7, "y": 8, "h": 9, "u": 10, "j": 11, "k": 12}
+
+        def change_keyboard_octave(direction: int) -> None:
+            release_all_notes()
+            keyboard_octave[0] = max(36, min(72, keyboard_octave[0] + direction * 12))
+            octave = keyboard_octave[0] // 12 - 1
+            self.screen_reader.speak(f"Keyboard octave {octave}. A is C {octave}; K is C {octave + 1}.")
 
         def sustained_note_path(note: int) -> str:
             preset_index = selected_preset_index()
@@ -4382,12 +4422,18 @@ class QuickEdit(tk.Tk):
 
         def play_key(event) -> str | None:
             key = (event.char or event.keysym).lower()
+            if key == "z":
+                change_keyboard_octave(-1)
+                return "break"
+            if key == "x":
+                change_keyboard_octave(1)
+                return "break"
             if key in key_mapping:
                 # Windows sends repeated KeyPress events while a physical key
                 # remains down. One held key must produce one sustained note.
                 if key in active_keys and active_keys[key].poll() is None:
                     return "break"
-                note = 60 + key_mapping[key]
+                note = keyboard_octave[0] + key_mapping[key]
                 index = notes.index(note)
                 note_list.selection_clear(0, "end"); note_list.selection_set(index); note_list.activate(index); note_list.see(index)
                 try:
@@ -4408,7 +4454,7 @@ class QuickEdit(tk.Tk):
             process = active_keys.pop(key, None)
             if process is not None and process.poll() is None:
                 process.terminate()
-            return "break" if key in key_mapping else None
+            return "break" if key in key_mapping or key in {"z", "x"} else None
 
         def release_all_notes(event=None) -> None:
             for process in active_keys.values():
@@ -4437,6 +4483,8 @@ class QuickEdit(tk.Tk):
         preset_list.bind("<<ListboxSelect>>", preset_changed)
         self.accessible_button(buttons, "Choose Sample Instrument", choose_sample).pack(side="left")
         self.accessible_button(buttons, "Choose SoundFont", choose_keyboard_soundfont).pack(side="left", padx=8)
+        self.accessible_button(octave_buttons, "Octave Down, Z", lambda: change_keyboard_octave(-1)).pack(side="left")
+        self.accessible_button(octave_buttons, "Octave Up, X", lambda: change_keyboard_octave(1)).pack(side="left", padx=8)
         self.accessible_button(buttons, "Preview Note", preview).pack(side="left", padx=8)
         self.accessible_button(buttons, "Insert Note", insert).pack(side="left")
         self.accessible_button(buttons, "Close Keyboard", close).pack(side="right")
@@ -4559,13 +4607,9 @@ class QuickEdit(tk.Tk):
         )
         if not sample_path:
             return
-        root_note = simpledialog.askinteger(
+        root_note = self._ask_midi_note(
             "Sample root note",
-            "Which MIDI note plays the sample at its original pitch? 60 is middle C:",
-            parent=self,
-            initialvalue=60,
-            minvalue=0,
-            maxvalue=127,
+            "Which note plays the sample at its original pitch? Enter G, C4, F sharp 3, B flat 2, or a MIDI number:",
         )
         if root_note is None:
             return
