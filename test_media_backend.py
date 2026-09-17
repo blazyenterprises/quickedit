@@ -80,6 +80,14 @@ class MediaEncodingTests(unittest.TestCase):
         backend.start_playback("imported.wav", speed=1.25)
         self.assertIn("--audio-pitch-correction=yes", popen.call_args.args[0])
 
+    @patch("media_backend.subprocess.Popen")
+    def test_looping_playback_repeats_until_note_release(self, popen):
+        backend = object.__new__(MediaBackend)
+        backend.mpv = "mpv.exe"
+        popen.return_value = SimpleNamespace()
+        backend.start_playback("sample.wav", loop=True)
+        self.assertIn("--loop-file=inf", popen.call_args.args[0])
+
     def test_volume_control_uses_mpv_property(self):
         backend = object.__new__(MediaBackend)
         commands = []

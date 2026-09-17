@@ -272,11 +272,12 @@ class MediaBackend:
             creationflags=CREATE_NO_WINDOW,
         )
 
-    def start_playback(self, wav_path: str, output_device: str = "auto", speed: float = 1.0, streaming: bool = False, volume: int = 100):
+    def start_playback(self, wav_path: str, output_device: str = "auto", speed: float = 1.0, streaming: bool = False, volume: int = 100, loop: bool = False):
         if not self.mpv:
             return None
         ipc_path = rf"\\.\pipe\quickedit-mpv-{uuid.uuid4().hex}"
         streaming_options = ["--cache=yes", "--cache-secs=1800", "--demuxer-max-back-bytes=512MiB", "--cache-pause=no"] if streaming else []
+        loop_options = ["--loop-file=inf"] if loop else []
         # Do not put neutral playback through mpv's time-stretch filter. Some
         # Windows audio devices expose a small but audible pitch offset when
         # that filter is forced on at exactly 1.0 speed. Enable it only when
@@ -286,7 +287,7 @@ class MediaBackend:
             [
                 self.mpv, "--no-config", "--no-video", "--really-quiet",
                 f"--audio-device={output_device}", f"--speed={speed:.8g}", f"--volume={volume}",
-                f"--audio-pitch-correction={pitch_correction}", f"--input-ipc-server={ipc_path}", *streaming_options, wav_path,
+                f"--audio-pitch-correction={pitch_correction}", f"--input-ipc-server={ipc_path}", *streaming_options, *loop_options, wav_path,
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

@@ -4211,6 +4211,8 @@ class QuickEdit(tk.Tk):
         instrument_mode = ["synth"]
         temporary_files: list[str] = []
         preview_processes: list[subprocess.Popen] = []
+        active_keys: dict[str, subprocess.Popen] = {}
+        sustained_note_cache: dict[tuple, str] = {}
         note_names = ("C", "C sharp", "D", "E flat", "E", "F", "F sharp", "G", "A flat", "A", "B flat", "B")
         notes = list(range(36, 85))
         waveforms = ("sine", "square", "triangle", "sawtooth", "white noise", "pink noise")
@@ -4312,7 +4314,7 @@ class QuickEdit(tk.Tk):
                 status.set(f"SoundFont preset {preset.name}; bank {preset.bank}, program {preset.program}.")
                 self.screen_reader.speak(status.get())
 
-        def render_note(note: int) -> str:
+        def render_note(note: int, duration: float = .6) -> str:
             document = self.document
             rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
             handle, path = tempfile.mkstemp(prefix="quickedit-key-", suffix=".wav"); os.close(handle)
@@ -4328,13 +4330,13 @@ class QuickEdit(tk.Tk):
                 handle, midi_path = tempfile.mkstemp(prefix="quickedit-key-", suffix=".mid"); os.close(handle)
                 temporary_files.append(midi_path)
                 with open(midi_path, "wb") as midi_file:
-                    midi_file.write(one_note_midi(note, preset))
+                    midi_file.write(one_note_midi(note, preset, duration_seconds=duration))
                 rendered = path + ".rendered.wav"
                 temporary_files.append(rendered)
                 self.media.render_midi(midi_path, soundfont_path[0], rendered, rate)
                 self.media.decode_to_format(rendered, path, rate, channels, width)
             else:
-                frames = signal_generator.generate_waveform(selected_waveform(), 440 * 2 ** ((note - 69) / 12), .6, rate, width, channels, -12)
+                frames = signal_generator.generate_waveform(selected_waveform(), 440 * 2 ** ((note - 69) / 12), duration, rate, width, channels, -12)
                 with wave.open(path, "wb") as target:
                     target.setnchannels(channels); target.setsampwidth(width); target.setframerate(rate); target.writeframes(frames)
             return path
@@ -4364,15 +4366,58 @@ class QuickEdit(tk.Tk):
                 messagebox.showerror("Could not insert keyboard note", str(exc), parent=dialog)
             return "break"
 
+        key_mapping = {key: offset for offset, key in enumerate("awsedftgyhuj")}
+
+        def sustained_note_path(note: int) -> str:
+            preset_index = selected_preset_index()
+            cache_key = (
+                instrument_mode[0], selected_waveform(), sample_path[0], root_note[0],
+                soundfont_path[0], preset_index, note,
+            )
+            path = sustained_note_cache.get(cache_key)
+            if not path or not os.path.isfile(path):
+                path = render_note(note, duration=30)
+                sustained_note_cache[cache_key] = path
+            return path
+
         def play_key(event) -> str | None:
-            mapping = {key: offset for offset, key in enumerate("awsedftgyhuj")}
-            if event.char.lower() in mapping:
-                index = notes.index(60 + mapping[event.char.lower()])
+            key = (event.char or event.keysym).lower()
+            if key in key_mapping:
+                # Windows sends repeated KeyPress events while a physical key
+                # remains down. One held key must produce one sustained note.
+                if key in active_keys and active_keys[key].poll() is None:
+                    return "break"
+                note = 60 + key_mapping[key]
+                index = notes.index(note)
                 note_list.selection_clear(0, "end"); note_list.selection_set(index); note_list.activate(index); note_list.see(index)
-                return preview()
+                try:
+                    path = sustained_note_path(note)
+                    process = self.media.start_playback(
+                        path, self.output_device, volume=self.playback_volume,
+                        loop=instrument_mode[0] == "sample",
+                    )
+                    if process:
+                        active_keys[key] = process
+                except (OSError, wave.Error, MediaError, ValueError) as exc:
+                    messagebox.showerror("Keyboard note failed", str(exc), parent=dialog)
+                return "break"
             return None
 
+        def release_key(event) -> str | None:
+            key = (event.char or event.keysym).lower()
+            process = active_keys.pop(key, None)
+            if process is not None and process.poll() is None:
+                process.terminate()
+            return "break" if key in key_mapping else None
+
+        def release_all_notes(event=None) -> None:
+            for process in active_keys.values():
+                if process.poll() is None:
+                    process.terminate()
+            active_keys.clear()
+
         def close() -> None:
+            release_all_notes()
             for process in preview_processes:
                 if process.poll() is None:
                     process.terminate()
@@ -4382,7 +4427,10 @@ class QuickEdit(tk.Tk):
                 except OSError: pass
             dialog.destroy()
 
-        note_list.bind("<space>", preview); note_list.bind("<Return>", insert); note_list.bind("<KeyPress>", play_key, add="+")
+        note_list.bind("<space>", preview); note_list.bind("<Return>", insert)
+        note_list.bind("<KeyPress>", play_key, add="+")
+        note_list.bind("<KeyRelease>", release_key, add="+")
+        dialog.bind("<FocusOut>", release_all_notes, add="+")
         waveform_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Synth waveform list. {selected_waveform()} selected."))
         waveform_list.bind("<<ListboxSelect>>", waveform_changed)
         preset_list.bind("<FocusIn>", lambda event: self.screen_reader.speak("SoundFont preset list. Choose SoundFont if no presets are loaded."))
