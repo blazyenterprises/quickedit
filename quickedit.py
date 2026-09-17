@@ -26,6 +26,7 @@ from soundfont_tools import Preset, list_presets, one_note_midi
 from midi_sample_renderer import filter_midi_channels, render_midi_with_sample
 import cd_burner
 import vst_backend
+import tts_backend
 
 # PyInstaller's Tk hook still points Python 3.14 at pre-3.14 library folders.
 # Tcl/Tk 9 carries its standard library in zipfs, so let it use that default.
@@ -276,6 +277,7 @@ class QuickEdit(tk.Tk):
         self.current_saved_stream_index = -1
         self.library_queue: list[str] = []
         self.library_queue_index = -1
+        self.audio_clipboard: tuple[bytes, int, int, int] | None = None
         self.navigation_step_index = self.NAVIGATION_STEPS.index(0.1)
         self.screen_reader = ScreenReaderAnnouncer()
         self._active_menu: tk.Menu | None = None
@@ -307,6 +309,7 @@ class QuickEdit(tk.Tk):
         file_menu = tk.Menu(menu, tearoff=False)
         file_menu.add_command(label="New Audio\tCtrl+N", command=self.new_file)
         file_menu.add_command(label="Open Audio\tCtrl+O", command=self.open_file)
+        file_menu.add_command(label="Open Audio with Preview", command=self.open_file_with_preview)
         self.recent_menu = tk.Menu(file_menu, tearoff=False, postcommand=self._refresh_recent_menu)
         file_menu.add_cascade(label="Recent Files", menu=self.recent_menu)
         self.favorites_menu = tk.Menu(file_menu, tearoff=False, postcommand=self._refresh_favorites_menu)
@@ -328,6 +331,8 @@ class QuickEdit(tk.Tk):
         edit_menu.add_command(label="Select All\tCtrl+A", command=self.select_all)
         edit_menu.add_command(label="Delete Selection\tDelete", command=self.delete_selection)
         edit_menu.add_command(label="Crop to Selection\tCtrl+T", command=self.crop_selection)
+        edit_menu.add_command(label="Copy Selected Audio for Mixing", command=self.copy_selection_for_mixing)
+        edit_menu.add_command(label="Mix Copied Audio at Cursor", command=self.mix_copied_audio)
         edit_menu.add_separator()
         edit_menu.add_command(label="Mix Audio File at Cursor", command=self.mix_audio_file)
         edit_menu.add_command(label="Crossfade Selected Halves", command=self.crossfade_selection)
@@ -377,6 +382,7 @@ class QuickEdit(tk.Tk):
         generate.add_command(label="Tone or Noise", command=self.generate_tone)
         generate.add_command(label="DTMF Telephone Keys", command=lambda: self.generate_phone_keys("DTMF"))
         generate.add_command(label="MF Telephone Keys", command=lambda: self.generate_phone_keys("MF"))
+        generate.add_command(label="Text to Speech Generator", command=self.text_to_speech_generator)
         generate.add_separator()
         generate.add_command(label="Censor Selection", command=self.censor_selection)
         menu.add_cascade(label="Generate and Censor", menu=generate)
@@ -586,6 +592,7 @@ class QuickEdit(tk.Tk):
         create.add_command(label="Tone or Noise", command=self.generate_tone)
         create.add_command(label="DTMF Telephone Keys", command=lambda: self.generate_phone_keys("DTMF"))
         create.add_command(label="MF Telephone Keys", command=lambda: self.generate_phone_keys("MF"))
+        create.add_command(label="Text to Speech Generator", command=self.text_to_speech_generator)
         menu.add_cascade(label="Generate", menu=create)
         processing = tk.Menu(menu, tearoff=False)
         processing.add_command(label="Switch to Editor Effects", command=lambda: self.switch_workspace("editor"))
@@ -938,6 +945,17 @@ class QuickEdit(tk.Tk):
         self.announce("Created new stereo audio at 44,100 Hertz and 16 bits.")
 
     def open_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Open audio or MIDI",
+            initialdir=self.last_open_directory if os.path.isdir(self.last_open_directory) else None,
+            filetypes=[("Audio and MIDI files", "*.wav *.mp3 *.flac *.ogg *.oga *.opus *.m4a *.aac *.wma *.aiff *.aif *.au *.snd *.caf *.wv *.mka *.webm *.mov *.mp4 *.3gp *.mid *.midi *.raw *.pcm"), ("All files", "*.*")],
+            parent=self,
+        )
+        if not path: return
+        self.last_open_directory = os.path.dirname(path); self._save_file_history()
+        self._open_path(path)
+
+    def open_file_with_preview(self) -> None:
         path = self._choose_audio_file()
         if not path:
             return
@@ -1500,13 +1518,13 @@ class QuickEdit(tk.Tk):
         self.announce(f"Imported {title}. Duration {format_time(document.duration)}.")
 
     def import_online_link(self) -> None:
-        url = simpledialog.askstring("Import online audio", "YouTube, SoundCloud, or other supported address:", parent=self)
+        url = self._accessible_text_prompt("Import online audio", "YouTube, SoundCloud, or other supported address")
         if not url:
             return
         self._import_online_result(OnlineResult(url, url, "Direct link"))
 
     def download_online_link(self) -> None:
-        url = simpledialog.askstring("Download online audio", "YouTube, SoundCloud, or other supported address:", parent=self)
+        url = self._accessible_text_prompt("Download online audio", "YouTube, SoundCloud, or other supported address")
         if not url:
             return
         self._download_online_result(OnlineResult(url, url, "Direct link"))
@@ -1566,7 +1584,7 @@ class QuickEdit(tk.Tk):
         self.wait_window(dialog)
 
     def preview_direct_url(self) -> None:
-        url = simpledialog.askstring("Preview direct URL", "Media, stream, PLS, M3U, or M3U8 address:", parent=self)
+        url = self._accessible_text_prompt("Preview direct URL", "Media, stream, PLS, M3U, or M3U8 address")
         if not url:
             return
         self._play_stream_url(url, "Direct URL")
@@ -1650,7 +1668,7 @@ class QuickEdit(tk.Tk):
                 return
             query, result_kind = options
         else:
-            query = simpledialog.askstring(f"Search {provider}", "Search terms:", parent=self)
+            query = self._accessible_text_prompt(f"Search {provider}", "Search terms")
         if not query:
             return
         self.announce(f"Searching {provider} for {query}.")
@@ -1670,7 +1688,7 @@ class QuickEdit(tk.Tk):
         result: list[tuple[str, str]] = []
         query_var = tk.StringVar()
         tk.Label(dialog, text="YouTube search terms").pack(anchor="w", padx=12, pady=(12, 4))
-        query_entry = ttk.Entry(dialog, textvariable=query_var, width=60, takefocus=True)
+        query_entry = tk.Entry(dialog, textvariable=query_var, width=60, takefocus=True)
         query_entry.pack(fill="x", padx=12)
         tk.Label(dialog, text="Result type").pack(anchor="w", padx=12, pady=(12, 4))
         type_list = tk.Listbox(dialog, exportselection=False, height=3, takefocus=True)
@@ -1720,11 +1738,11 @@ class QuickEdit(tk.Tk):
         password_var = tk.StringVar(value=saved[1])
         remember_var = tk.BooleanVar(value=self.audiovault_credentials is not None)
         tk.Label(dialog, text="AudioVault email").grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
-        email_entry = ttk.Entry(dialog, textvariable=email_var, width=48)
+        email_entry = tk.Entry(dialog, textvariable=email_var, width=48)
         email_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("AudioVault email, edit."))
         email_entry.grid(row=1, column=0, sticky="ew", padx=12)
         tk.Label(dialog, text="Password").grid(row=2, column=0, sticky="w", padx=12, pady=(10, 4))
-        password_entry = ttk.Entry(dialog, textvariable=password_var, show="*", width=48)
+        password_entry = tk.Entry(dialog, textvariable=password_var, show="*", width=48)
         password_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("AudioVault password, protected edit."))
         password_entry.grid(row=3, column=0, sticky="ew", padx=12)
         remember_check = ttk.Checkbutton(
@@ -1794,7 +1812,7 @@ class QuickEdit(tk.Tk):
     def search_audiovault(self, section: str) -> None:
         if not self.ensure_audiovault_login():
             return
-        query = simpledialog.askstring("Search AudioVault", "Title or search terms:", parent=self)
+        query = self._accessible_text_prompt("Search AudioVault", "Title or search terms")
         if query is None:
             return
         self.announce("Searching AudioVault.")
@@ -2200,12 +2218,12 @@ class QuickEdit(tk.Tk):
         dialog = tk.Toplevel(self); dialog.title("Edit Audio Tags"); dialog.transient(self); dialog.grab_set()
         tk.Label(dialog, text=f"Tags for {os.path.basename(document.source_path)}", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 8))
         tk.Label(dialog, text=f"Duration: {format_time(document.duration)}. Empty fields are omitted when saving.").grid(row=1, column=0, sticky="w", padx=12)
-        variables: dict[str, tk.StringVar] = {}; entries: list[ttk.Entry] = []
+        variables: dict[str, tk.StringVar] = {}; entries: list[tk.Entry] = []
         all_tags = self.COMMON_TAGS + self.OPTIONAL_TAGS
         for row, (key, label) in enumerate(all_tags, 2):
             tk.Label(dialog, text=label).grid(row=row * 2 - 2, column=0, sticky="w", padx=12, pady=(5, 1))
             variable = tk.StringVar(value=document.metadata.get(key, ""))
-            entry = ttk.Entry(dialog, textvariable=variable, width=60, takefocus=True)
+            entry = tk.Entry(dialog, textvariable=variable, width=60, takefocus=True)
             entry.grid(row=row * 2 - 1, column=0, sticky="ew", padx=12)
             entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
             variables[key] = variable; entries.append(entry)
@@ -2375,11 +2393,7 @@ class QuickEdit(tk.Tk):
         document = self.require_document()
         if not document:
             return
-        value = simpledialog.askstring(
-            "Go to time",
-            "Enter seconds, minutes:seconds, or hours:minutes:seconds:",
-            parent=self,
-        )
+        value = self._accessible_text_prompt("Go to time", "Enter seconds, minutes:seconds, or hours:minutes:seconds")
         if value is None:
             return
         try:
@@ -2484,6 +2498,46 @@ class QuickEdit(tk.Tk):
             if os.path.isfile(converted):
                 os.remove(converted)
 
+    def copy_selection_for_mixing(self) -> None:
+        document = self.require_document()
+        if not document: return
+        selection = document.selection()
+        if not selection:
+            self.announce("Set both selection brackets around the audio to copy for mixing."); return
+        start, end = selection
+        self.audio_clipboard = (document.slice_bytes(start, end), document.frame_rate, document.sample_width, document.channels)
+        self.announce(f"Copied {format_time(document.seconds_at(end - start))} of audio for mixing. It remains available after opening another file.")
+
+    def mix_copied_audio(self) -> None:
+        document = self.require_document()
+        if not document: return
+        if not self.audio_clipboard:
+            self.announce("No selected audio has been copied for mixing yet."); return
+        frames, rate, width, channels = self.audio_clipboard
+        overlay = frames
+        source = ""
+        temporary = ""
+        try:
+            if (rate, width, channels) != (document.frame_rate, document.sample_width, document.channels):
+                source_handle, source = tempfile.mkstemp(prefix="quickedit-mix-copy-", suffix=".wav"); os.close(source_handle)
+                converted_handle, temporary = tempfile.mkstemp(prefix="quickedit-mix-converted-", suffix=".wav"); os.close(converted_handle)
+                with wave.open(source, "wb") as target:
+                    target.setnchannels(channels); target.setsampwidth(width); target.setframerate(rate); target.writeframes(frames)
+                self.media.decode_to_format(source, temporary, document.frame_rate, document.channels, document.sample_width)
+                with wave.open(temporary, "rb") as audio: overlay = audio.readframes(audio.getnframes())
+            start = document.cursor_frame
+            existing = document.slice_bytes(start, min(document.frame_count, start + len(overlay) // document.frame_size))
+            self.stop(announce=False); self._checkpoint()
+            mixed = audio_effects.mix_pcm(existing, overlay, document.sample_width)
+            end = start + len(existing) // document.frame_size
+            document.frames = document.slice_bytes(0, start) + mixed + document.slice_bytes(end, document.frame_count)
+            document.cursor_frame = start; self.refresh_details()
+            self.announce(f"Mixed copied audio at {format_time(document.seconds_at(start))}.")
+        except (OSError, wave.Error, MediaError) as exc: messagebox.showerror("Could not mix copied audio", str(exc), parent=self)
+        finally:
+            if source and os.path.isfile(source): os.remove(source)
+            if temporary and os.path.isfile(temporary): os.remove(temporary)
+
     def crossfade_selection(self) -> None:
         document = self.require_document()
         if not document:
@@ -2555,11 +2609,11 @@ class QuickEdit(tk.Tk):
         with open(self.effect_preset_path, "w", encoding="utf-8") as target:
             json.dump(presets, target, indent=2, sort_keys=True)
 
-    def _accessible_text_prompt(self, title: str, label: str) -> str | None:
+    def _accessible_text_prompt(self, title: str, label: str, initial: str = "", password: bool = False) -> str | None:
         dialog = tk.Toplevel(self); dialog.title(title); dialog.transient(self); dialog.grab_set()
-        value = tk.StringVar(); result: list[str] = []
+        value = tk.StringVar(value=initial); result: list[str] = []
         tk.Label(dialog, text=label).pack(anchor="w", padx=12, pady=(12, 4))
-        entry = ttk.Entry(dialog, textvariable=value, width=45, takefocus=True); entry.pack(fill="x", padx=12)
+        entry = tk.Entry(dialog, textvariable=value, width=45, takefocus=True, show="*" if password else ""); entry.pack(fill="x", padx=12)
         buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
         def accept(event=None):
             name = value.get().strip()
@@ -2567,8 +2621,8 @@ class QuickEdit(tk.Tk):
             else: self.screen_reader.speak(f"{label} cannot be blank.")
             return "break"
         entry.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{label}, edit.")); entry.bind("<Return>", accept)
-        self.accessible_button(buttons, "Save Preset", accept).pack(side="left")
-        self.accessible_button(buttons, "Cancel Preset", dialog.destroy).pack(side="right")
+        self.accessible_button(buttons, "OK", accept).pack(side="left")
+        self.accessible_button(buttons, "Cancel", dialog.destroy).pack(side="right")
         entry.focus_set(); self.wait_window(dialog)
         return result[0] if result else None
 
@@ -2728,7 +2782,7 @@ class QuickEdit(tk.Tk):
         dialog.transient(self)
         dialog.grab_set()
         values: dict[str, tk.StringVar] = {}
-        entries: dict[str, ttk.Entry] = {}
+        entries: dict[str, tk.Entry] = {}
         result: list[dict[str, float]] = []
         tk.Label(dialog, text=f"{title} settings", font=("Segoe UI", 12, "bold")).grid(
             row=0, column=0, sticky="w", padx=12, pady=(12, 8)
@@ -2745,7 +2799,7 @@ class QuickEdit(tk.Tk):
         for row, (key, label, default, minimum, maximum) in enumerate(fields, 2):
             tk.Label(dialog, text=label).grid(row=row * 2 - 1, column=0, sticky="w", padx=12, pady=(5, 2))
             variable = tk.StringVar(value=f"{default:g}")
-            entry = ttk.Entry(dialog, textvariable=variable, width=28, takefocus=True)
+            entry = tk.Entry(dialog, textvariable=variable, width=28, takefocus=True)
             entry.grid(row=row * 2, column=0, sticky="ew", padx=12)
             entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
             values[key] = variable
@@ -2889,10 +2943,10 @@ class QuickEdit(tk.Tk):
             ("Duration in seconds", "1"),
             ("Level in dBFS; minus 60 through 0", "-12"),
         )
-        variables: list[tk.StringVar] = []; entries: list[ttk.Entry] = []
+        variables: list[tk.StringVar] = []; entries: list[tk.Entry] = []
         for offset, (label, default) in enumerate(field_specs, 2):
             tk.Label(dialog, text=label).grid(row=offset * 2 - 2, column=0, sticky="w", padx=12, pady=(6, 2))
-            variable = tk.StringVar(value=default); entry = ttk.Entry(dialog, textvariable=variable, takefocus=True)
+            variable = tk.StringVar(value=default); entry = tk.Entry(dialog, textvariable=variable, takefocus=True)
             entry.grid(row=offset * 2 - 1, column=0, sticky="ew", padx=12)
             entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
             variables.append(variable); entries.append(entry)
@@ -2947,9 +3001,9 @@ class QuickEdit(tk.Tk):
         dialog = tk.Toplevel(self); dialog.title(f"{kind} Telephone Tone Generator"); dialog.transient(self); dialog.grab_set()
         result: list[tuple[str, float]] = []; digits_var = tk.StringVar(); speed_var = tk.StringVar(value="8")
         tk.Label(dialog, text=f"{kind} key sequence").grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
-        digits_entry = ttk.Entry(dialog, textvariable=digits_var, takefocus=True); digits_entry.grid(row=1, column=0, sticky="ew", padx=12)
+        digits_entry = tk.Entry(dialog, textvariable=digits_var, takefocus=True); digits_entry.grid(row=1, column=0, sticky="ew", padx=12)
         tk.Label(dialog, text="Symbols per second; point 5 through 50").grid(row=2, column=0, sticky="w", padx=12, pady=(8, 2))
-        speed_entry = ttk.Entry(dialog, textvariable=speed_var, takefocus=True); speed_entry.grid(row=3, column=0, sticky="ew", padx=12)
+        speed_entry = tk.Entry(dialog, textvariable=speed_var, takefocus=True); speed_entry.grid(row=3, column=0, sticky="ew", padx=12)
         buttons = tk.Frame(dialog); buttons.grid(row=4, column=0, sticky="ew", padx=12, pady=12)
         def settings() -> tuple[str, float] | None:
             digits = digits_var.get().strip()
@@ -2994,6 +3048,129 @@ class QuickEdit(tk.Tk):
             self._insert_generated_audio(frames, f"{kind} {digits}", rate, width, channels)
         except ValueError as exc:
             messagebox.showerror(f"Could not generate {kind}", str(exc), parent=self)
+
+    def text_to_speech_generator(self) -> None:
+        dialog = tk.Toplevel(self); dialog.title("Text to Speech Generator"); dialog.geometry("780x680"); dialog.transient(self); dialog.grab_set()
+        engines = ["SAPI 4 and 5", "eSpeak"]
+        if tts_backend.festival_available(): engines.append("Festival")
+        engines += ["OpenAI", "ElevenLabs", "Microsoft Azure", "Fish Audio", "Amazon Polly", "STAR Server"]
+        engine_var = tk.StringVar(value=engines[0]); voice_var = tk.StringVar(); rate_var = tk.StringVar(value="0"); pitch_var = tk.StringVar(value="0"); volume_var = tk.StringVar(value="100")
+        tk.Label(dialog, text="Speech engine").pack(anchor="w", padx=12, pady=(12, 2))
+        engine_box = ttk.Combobox(dialog, textvariable=engine_var, values=engines, state="readonly", takefocus=True); engine_box.pack(fill="x", padx=12)
+        tk.Label(dialog, text="Voice name or voice ID").pack(anchor="w", padx=12, pady=(8, 2))
+        voice_box = ttk.Combobox(dialog, textvariable=voice_var, takefocus=True); voice_box.pack(fill="x", padx=12)
+        parameter_row = tk.Frame(dialog); parameter_row.pack(fill="x", padx=12, pady=8)
+        parameter_entries = []
+        for label, variable in (("Rate", rate_var), ("Pitch", pitch_var), ("Volume", volume_var)):
+            column = tk.Frame(parameter_row); column.pack(side="left", fill="x", expand=True, padx=3)
+            tk.Label(column, text=label).pack(anchor="w")
+            entry = tk.Entry(column, textvariable=variable, takefocus=True)
+            entry.pack(fill="x"); entry.bind("<FocusIn>", lambda event, name=label: self.screen_reader.speak(f"{name}, edit."))
+            parameter_entries.append(entry)
+        tk.Label(dialog, text="Text to synthesize").pack(anchor="w", padx=12, pady=(4, 2))
+        text_box = tk.Text(dialog, height=20, wrap="word", takefocus=True); text_box.pack(fill="both", expand=True, padx=12)
+        buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
+
+        def provider_name() -> str:
+            return "Azure" if engine_var.get() == "Microsoft Azure" else engine_var.get()
+
+        def credential_fields(provider: str) -> list[tuple[str, str]]:
+            return {
+                "OpenAI": [("api_key", "API key"), ("model", "Model; default gpt-4o-mini-tts")],
+                "ElevenLabs": [("api_key", "API key"), ("model", "Model; default eleven_multilingual_v2")],
+                "Azure": [("api_key", "Subscription key"), ("region", "Azure region")],
+                "Fish Audio": [("api_key", "API key"), ("model", "Model; default s2-pro")],
+                "Amazon Polly": [("access_key", "AWS access key ID"), ("secret_key", "AWS secret access key"), ("region", "AWS region"), ("engine", "Engine; default neural")],
+                "STAR Server": [("server", "WebSocket server address, including authentication if required")],
+            }.get(provider, [])
+
+        def configure() -> None:
+            provider = provider_name(); fields = credential_fields(provider)
+            if not fields: self.screen_reader.speak("This local engine does not require credentials."); return
+            store = CredentialStore("tts-" + provider.lower().replace(" ", "-")); existing = store.load_dict(); values = dict(existing)
+            for key, label in fields:
+                value = self._accessible_text_prompt(f"Configure {provider}", label, existing.get(key, ""), password="key" in key and key != "access_key")
+                if value is None: return
+                values[key] = value.strip()
+            store.save_dict(values); self.screen_reader.speak(f"{provider} settings saved securely for this Windows user.")
+
+        def refresh_voices(event=None) -> None:
+            engine = engine_var.get(); voices = []
+            try:
+                if engine == "SAPI 4 and 5": voices = tts_backend.windows_voices()
+                elif engine == "eSpeak": voices = tts_backend.espeak_voices()
+                elif engine == "STAR Server":
+                    credentials = CredentialStore("tts-star-server").load_dict()
+                    if not credentials.get("server"): configure(); credentials = CredentialStore("tts-star-server").load_dict()
+                    if credentials.get("server"): voices = tts_backend.star_voices(credentials["server"])
+            except Exception as exc: messagebox.showerror("Could not list voices", str(exc), parent=dialog)
+            voice_box.configure(values=voices)
+            if voices: voice_var.set(voices[0])
+            elif engine in {"OpenAI", "ElevenLabs", "Microsoft Azure", "Fish Audio", "Amazon Polly"}: voice_var.set("")
+
+        def render() -> str:
+            text = text_box.get("1.0", "end").strip(); engine = engine_var.get(); voice = voice_var.get().strip()
+            if not text: raise tts_backend.TTSError("Enter some text to synthesize.")
+            try: rate, pitch, volume = float(rate_var.get()), int(float(pitch_var.get())), int(float(volume_var.get()))
+            except ValueError as exc: raise tts_backend.TTSError("Rate, pitch, and volume must be numbers.") from exc
+            handle, path = tempfile.mkstemp(prefix="quickedit-tts-", suffix=".wav"); os.close(handle)
+            if engine == "SAPI 4 and 5": tts_backend.windows_synthesize(text, voice, path, round(rate), pitch, volume)
+            elif engine == "eSpeak": tts_backend.espeak_synthesize(text, voice or "en", path, max(80, round(175 + rate * 15)), max(0, min(99, 50 + pitch * 5)), volume)
+            elif engine == "Festival": tts_backend.festival_synthesize(text, voice, path)
+            elif engine == "STAR Server":
+                settings = CredentialStore("tts-star-server").load_dict(); tts_backend.star_synthesize(settings["server"], voice, text, path, round(rate), pitch)
+            else:
+                provider = provider_name(); settings = CredentialStore("tts-" + provider.lower().replace(" ", "-")).load_dict()
+                if not settings: raise tts_backend.TTSError(f"Configure {provider} credentials first.")
+                tts_backend.web_synthesize(provider, text, voice, path, settings, max(.25, min(4, rate if rate > 0 else 1)))
+            return path
+
+        def preview(event=None) -> str:
+            try:
+                path = render(); self.stop_effect_preview(); self.effect_preview_files.add(path)
+                self.preview_process = self.media.start_playback(path, self.output_device, volume=self.playback_volume); self.announce("Playing speech preview.")
+            except Exception as exc: messagebox.showerror("Speech generation failed", str(exc), parent=dialog)
+            return "break"
+
+        def insert(event=None) -> str:
+            try:
+                path = render(); document = self.document
+                rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
+                handle, decoded = tempfile.mkstemp(prefix="quickedit-tts-decoded-", suffix=".wav"); os.close(handle)
+                self.media.decode_to_format(path, decoded, rate, channels, width)
+                with wave.open(decoded, "rb") as source: frames = source.readframes(source.getnframes())
+                self._insert_generated_audio(frames, "Text to Speech", rate, width, channels)
+                os.remove(path); os.remove(decoded); dialog.destroy()
+            except Exception as exc: messagebox.showerror("Speech generation failed", str(exc), parent=dialog)
+            return "break"
+
+        def save_audio(event=None) -> str:
+            target = filedialog.asksaveasfilename(title="Save generated speech", defaultextension=".wav", filetypes=[("WAV audio", "*.wav"), ("MP3 audio", "*.mp3"), ("FLAC audio", "*.flac"), ("All files", "*.*")], parent=dialog)
+            if not target: return "break"
+            try:
+                path = render(); handle, decoded = tempfile.mkstemp(prefix="quickedit-tts-save-", suffix=".wav"); os.close(handle)
+                self.media.decode_to_format(path, decoded, 44100, 1, 2)
+                if target.lower().endswith(".wav"): os.replace(decoded, target)
+                else: self.media.encode(decoded, target)
+                try: os.remove(path)
+                except OSError: pass
+                try: os.remove(decoded)
+                except OSError: pass
+                self.announce(f"Saved generated speech as {os.path.basename(target)}.")
+            except Exception as exc: messagebox.showerror("Speech generation failed", str(exc), parent=dialog)
+            return "break"
+
+        engine_box.bind("<<ComboboxSelected>>", refresh_voices)
+        engine_box.bind("<FocusIn>", lambda event: self.screen_reader.speak("Speech engine, combo box."))
+        voice_box.bind("<FocusIn>", lambda event: self.screen_reader.speak("Voice name or voice ID, editable combo box."))
+        text_box.bind("<FocusIn>", lambda event: self.screen_reader.speak("Text to synthesize, multiline edit."))
+        self.accessible_button(buttons, "Refresh Voices", refresh_voices).pack(side="left")
+        self.accessible_button(buttons, "Configure Engine", configure).pack(side="left", padx=6)
+        self.accessible_button(buttons, "Preview Speech", preview).pack(side="left")
+        self.accessible_button(buttons, "Insert Speech at Cursor", insert).pack(side="left", padx=6)
+        self.accessible_button(buttons, "Save Speech Audio", save_audio).pack(side="left")
+        self.accessible_button(buttons, "Close", dialog.destroy).pack(side="right")
+        dialog.bind("<Escape>", lambda event: dialog.destroy()); refresh_voices(); text_box.focus_set()
 
     def censor_selection(self) -> None:
         document = self.require_document()
@@ -4355,25 +4532,29 @@ class QuickEdit(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = QuickEdit()
     if "--smoke-test" in sys.argv:
+        app_dir = application_dir()
+        media = MediaBackend(app_dir)
+        online = OnlineBackend(app_dir)
         required_tools = (
-            app.media.ffmpeg,
-            os.path.join(application_dir(), "ffprobe.exe"),
-            app.media.mpv,
-            app.media.fluidsynth,
-            app.online.ytdlp,
-            app.carla_executable,
+            media.ffmpeg,
+            os.path.join(app_dir, "ffprobe.exe"),
+            media.mpv,
+            media.fluidsynth,
+            online.ytdlp,
+            os.path.join(app_dir, "runtime", "carla-host", "Carla.exe"),
         )
         if not all(path and os.path.isfile(path) for path in required_tools):
             raise RuntimeError("The portable package is missing one or more bundled audio tools.")
         if not vst_backend._pedalboard().__version__:
             raise RuntimeError("The portable package is missing the offline VST engine.")
-        app.update_idletasks()
-        app.destroy()
-        # A few bundled native runtimes keep Windows loader threads alive after
-        # Tk closes. The smoke-test contract is process completion, not a GUI
-        # main loop, so exit explicitly after every required component passes.
+        if not tts_backend.balcon_path():
+            raise RuntimeError("The portable package is missing Windows SAPI 4 and 5 speech support.")
+        import boto3
+        from websockets.sync.client import connect as unused_websocket_connect
+        if not boto3.__version__ or not unused_websocket_connect:
+            raise RuntimeError("The portable package is missing online speech support.")
         os._exit(0)
     else:
+        app = QuickEdit()
         app.mainloop()

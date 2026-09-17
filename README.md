@@ -67,6 +67,10 @@ Windows user.
 **Edit > Mix Audio File at Cursor** overlays another audio or media file at the
 current cursor and extends the document when the incoming sound runs past its
 end. The incoming file is automatically converted to the document's PCM format.
+For mixing between open files, bracket a region, choose **Copy Selected Audio
+for Mixing**, open the destination file, place its cursor, and choose **Mix
+Copied Audio at Cursor**. This separate audio clipboard survives opening the
+destination and converts sample rate, channel count, and bit depth when needed.
 **Crossfade Selected Halves** treats the first half of the bracketed selection
 as outgoing audio and the second half as incoming audio, overlaps them with
 equal-power fades, and shortens the selection to the new overlap. Both edits
@@ -102,9 +106,11 @@ offers an Other FFmpeg-supported format entry: type an extension and QuickEdit
 will ask the bundled FFmpeg build to select its normal encoder and container.
 
 Audio-only MOV/ALAC, MP4/AAC, 3GP, 3G2, MKA/MKV, and WebM/Opus exports are also
-available. QuickEdit's Open dialog starts in Downloads on its first use, then
-remembers the last folder visited—even after QuickEdit is restarted—and opens
-there next time. The dialog includes a Preview checkbox. With Preview enabled,
+available. Ordinary **Open Audio** and Save commands use the native Windows file
+dialogs and remember the last folder visited. **Open Audio with Preview** opens
+QuickEdit's separate sound browser when auditioning files before opening is more
+important than Windows Explorer integration. Its Preview checkbox controls
+auditioning. With Preview enabled,
 moving through files with Up and Down plays the
 highlighted file. Enter opens a file or enters a folder, and Backspace moves to
 the parent folder. Typing a letter jumps to the next filename or folder
@@ -146,6 +152,16 @@ telephone key strings. Censor Selection can replace a bracketed selection with
 a beep, buzz, silence, reversed audio, or remove it. Censoring is deliberately
 selection based; QuickEdit does not send speech to an online transcription
 service or guess which words the editor intended to censor.
+
+**Text to Speech Generator** can preview, insert, or save speech. Local engines
+include installed SAPI 4 and SAPI 5 voices (through the bundled Balabolka command
+line engine), eSpeak, and Festival when available. Configurable online engines
+include OpenAI, ElevenLabs, Microsoft Azure, Fish Audio, Amazon Polly, and a
+user-supplied STAR WebSocket server. Service keys and STAR addresses are
+encrypted by Windows for the current account. QuickEdit never supplies or
+silently selects a shared STAR server. VDSoft 3000 is currently an NVDA-only
+32-bit synthesizer rather than an audio-export engine; it cannot yet be inserted
+or saved without a standalone renderer from that public project.
 
 The **VST Plug-ins** menu opens the bundled Carla rack in its own process for
 live VST2 and VST3 plug-in use. QuickEdit can also preview a VST3 plug-in on up

@@ -30,9 +30,11 @@ kernel32.LocalFree.restype = ctypes.c_void_p
 class CredentialStore:
     """Store optional credentials encrypted for the current Windows user."""
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = "audiovault-credentials") -> None:
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
-        self.path = os.path.join(base, "QuickEdit", "audiovault-credentials.dat")
+        safe_name = "".join(char for char in name if char.isalnum() or char in "-_")
+        self.path = os.path.join(base, "QuickEdit", f"{safe_name}.dat")
+        self.description = f"QuickEdit {safe_name}"
 
     @staticmethod
     def _blob(data: bytes) -> tuple[DATA_BLOB, object]:
@@ -45,7 +47,7 @@ class CredentialStore:
         source, source_buffer = self._blob(plaintext)
         output = DATA_BLOB()
         if not crypt32.CryptProtectData(
-            ctypes.byref(source), "QuickEdit AudioVault", None, None, None, 0,
+            ctypes.byref(source), self.description, None, None, None, 0,
             ctypes.byref(output),
         ):
             raise OSError("Windows could not protect the saved AudioVault login.")
@@ -87,3 +89,27 @@ class CredentialStore:
             os.remove(self.path)
         except FileNotFoundError:
             pass
+
+    def save_dict(self, values: dict[str, str]) -> None:
+        plaintext = json.dumps(values).encode("utf-8")
+        source, source_buffer = self._blob(plaintext); output = DATA_BLOB()
+        if not crypt32.CryptProtectData(ctypes.byref(source), self.description, None, None, None, 0, ctypes.byref(output)):
+            raise OSError("Windows could not protect the saved credentials.")
+        try: protected = ctypes.string_at(output.pbData, output.cbData)
+        finally: kernel32.LocalFree(output.pbData)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "wb") as target: target.write(base64.b64encode(protected))
+
+    def load_dict(self) -> dict[str, str]:
+        try:
+            with open(self.path, "rb") as source: protected = base64.b64decode(source.read(), validate=True)
+        except (OSError, ValueError): return {}
+        source, source_buffer = self._blob(protected); output = DATA_BLOB(); description = wintypes.LPWSTR()
+        if not crypt32.CryptUnprotectData(ctypes.byref(source), ctypes.byref(description), None, None, None, 0, ctypes.byref(output)): return {}
+        try: plaintext = ctypes.string_at(output.pbData, output.cbData)
+        finally:
+            kernel32.LocalFree(output.pbData)
+            if description: kernel32.LocalFree(description)
+        try:
+            values = json.loads(plaintext.decode("utf-8")); return {str(k): str(v) for k, v in values.items()}
+        except (ValueError, TypeError): return {}

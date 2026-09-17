@@ -3,14 +3,17 @@
 from PyInstaller.utils.hooks import collect_all
 
 pedalboard_datas, pedalboard_binaries, pedalboard_hiddenimports = collect_all('pedalboard')
+websocket_datas, websocket_binaries, websocket_hiddenimports = collect_all('websockets')
+boto3_datas, boto3_binaries, boto3_hiddenimports = collect_all('boto3')
+botocore_datas, botocore_binaries, botocore_hiddenimports = collect_all('botocore')
 
 
 a = Analysis(
     ['quickedit.py'],
     pathex=['.builddeps'],
-    binaries=[('ffmpeg.exe', '.'), ('ffprobe.exe', '.'), ('mpv.exe', '.'), ('nvdaControllerClient64.dll', '.'), *pedalboard_binaries],
-    datas=[('runtime', 'runtime'), *pedalboard_datas],
-    hiddenimports=pedalboard_hiddenimports,
+    binaries=[('ffmpeg.exe', '.'), ('ffprobe.exe', '.'), ('mpv.exe', '.'), ('nvdaControllerClient64.dll', '.'), *pedalboard_binaries, *websocket_binaries, *boto3_binaries, *botocore_binaries],
+    datas=[('runtime', 'runtime'), *pedalboard_datas, *websocket_datas, *boto3_datas, *botocore_datas],
+    hiddenimports=pedalboard_hiddenimports + websocket_hiddenimports + boto3_hiddenimports + botocore_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=['pyi_rth_tk314.py'],
