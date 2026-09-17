@@ -552,8 +552,10 @@ class QuickEdit(tk.Tk):
         menu.add_cascade(label="Library", menu=library)
         playback = tk.Menu(menu, tearoff=False)
         playback.add_command(label="Play or Pause\tSpace", command=self.toggle_play)
-        playback.add_command(label="Restart Current Song\tF2", command=self.master_play)
+        playback.add_command(label="Restart Current Song\tF2", command=self.play_library_from_start)
         playback.add_command(label="Stop\tBackspace", command=lambda: self.stop(announce=True))
+        playback.add_command(label="Rewind 10 Seconds\tAlt+Left", command=lambda: self.seek_library_playback(-10))
+        playback.add_command(label="Fast Forward 10 Seconds\tAlt+Right", command=lambda: self.seek_library_playback(10))
         playback.add_command(label="Playback Speed", command=self.set_playback_speed)
         playback.add_command(label="Volume Up\tCtrl+Up", command=lambda: self.adjust_playback_volume(5))
         playback.add_command(label="Volume Down\tCtrl+Down", command=lambda: self.adjust_playback_volume(-5))
@@ -836,7 +838,7 @@ class QuickEdit(tk.Tk):
 
         callback = None
         if key == "f2":
-            callback = self.master_play
+            callback = self.play_library_from_start if self.workspace_mode == "library" else self.master_play
         elif key == "f3":
             callback = self.play_whole_reverse if shift else self.play_reverse
         elif key == "f4" and not alt:
@@ -857,6 +859,10 @@ class QuickEdit(tk.Tk):
             callback = lambda: self.play_adjacent_library_song(-1)
         elif self.workspace_mode == "library" and key == "right" and control and not alt and not shift:
             callback = lambda: self.play_adjacent_library_song(1)
+        elif self.workspace_mode == "library" and key == "left" and alt and not control and not shift:
+            callback = lambda: self.seek_library_playback(-10)
+        elif self.workspace_mode == "library" and key == "right" and alt and not control and not shift:
+            callback = lambda: self.seek_library_playback(10)
         elif key == "left" and control and alt:
             callback = lambda: self.play_adjacent_saved_stream(-1)
         elif key == "right" and control and alt:
@@ -1175,7 +1181,7 @@ class QuickEdit(tk.Tk):
         self.wait_window(dialog)
         return result[0] if result else None
 
-    def _open_path(self, path: str) -> None:
+    def _open_path(self, path: str, announce: bool = True) -> None:
         if not os.path.isfile(path):
             self.announce(f"File not found: {os.path.basename(path)}.")
             self._forget_missing_path(path)
@@ -1270,7 +1276,8 @@ class QuickEdit(tk.Tk):
         self.title(f"QuickEdit - {os.path.basename(path)}")
         self.refresh_details()
         self._remember_recent(path)
-        self.announce(f"Opened {os.path.basename(path)}. Duration {format_time(document.duration)}.")
+        if announce:
+            self.announce(f"Opened {os.path.basename(path)}. Duration {format_time(document.duration)}.")
 
     @property
     def _history_path(self) -> str:
@@ -1513,7 +1520,7 @@ class QuickEdit(tk.Tk):
             if selected:
                 self.library_queue = [item[1] for item in items]
                 self.library_queue_index = selected[0]
-                path = items[selected[0]][1]; dialog.destroy(); self._open_path(path); self.master_play()
+                path = items[selected[0]][1]; dialog.destroy(); self._open_path(path, announce=False); self.play_library_from_start()
             return "break"
         def close(event=None) -> str: dialog.destroy(); return "break"
         choices.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Library {category} list. Use arrows and press Enter to play."))
@@ -3970,7 +3977,34 @@ class QuickEdit(tk.Tk):
                 self.announce("Reached the end of the library queue. Repeat all is off.")
                 return
         self.library_queue = queue; self.library_queue_index = target
-        self._open_path(queue[self.library_queue_index]); self.master_play()
+        self._open_path(queue[self.library_queue_index], announce=False)
+        self.play_library_from_start()
+
+    def _library_track_name(self) -> str:
+        document = self.document
+        if not document:
+            return "current song"
+        title = document.metadata.get("title", "").strip()
+        artist = document.metadata.get("artist", "").strip()
+        if not title:
+            title = os.path.splitext(os.path.basename(document.source_path))[0]
+        return f"{title} by {artist}" if artist else title
+
+    def play_library_from_start(self) -> None:
+        document = self.require_document()
+        if not document:
+            return
+        document.cursor_frame = 0
+        self._play_frames(document.frames, 0, 1, f"Playing {self._library_track_name()}.")
+        self.refresh_details()
+
+    def seek_library_playback(self, seconds: float) -> None:
+        document = self.require_document()
+        if not document:
+            return
+        self.move_cursor(seconds)
+        action = "Fast forwarded" if seconds > 0 else "Rewound"
+        self.set_status(f"{action} to {format_time(document.seconds_at(document.cursor_frame))} in {self._library_track_name()}.")
 
     def _apply_playback_speed(self, speed: float) -> None:
         was_playing = self.playing and self.document is not None
@@ -5104,11 +5138,16 @@ class QuickEdit(tk.Tk):
             forward = self.play_direction > 0
             self.stop(announce=False)
             if forward and self.repeat_mode == "one":
-                self.master_play()
+                if self.workspace_mode == "library":
+                    self.play_library_from_start()
+                else:
+                    self.master_play()
                 return
             if forward and self.repeat_mode == "all":
                 if self.library_queue:
                     self.play_adjacent_library_song(1)
+                elif self.workspace_mode == "library":
+                    self.play_library_from_start()
                 else:
                     self.master_play()
                 return
