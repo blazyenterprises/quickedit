@@ -235,6 +235,8 @@ class QuickEdit(tk.Tk):
         self.play_target_frame = 0
         self.play_started_at = 0.0
         self.playback_speed = 1.0
+        self.playback_preset_one_shot = False
+        self.playback_volume = 100
         self.playback_pitch_semitones = 0.0
         self.playback_pitch_preserves_speed = True
         self.playback_pitch_preserve_var = tk.BooleanVar(value=True)
@@ -265,6 +267,8 @@ class QuickEdit(tk.Tk):
         self.library_playlists: dict[str, list[str]] = {}
         self.saved_streams: list[dict[str, str]] = []
         self.current_saved_stream_index = -1
+        self.library_queue: list[str] = []
+        self.library_queue_index = -1
         self.navigation_step_index = self.NAVIGATION_STEPS.index(0.1)
         self.screen_reader = ScreenReaderAnnouncer()
         self._active_menu: tk.Menu | None = None
@@ -474,8 +478,12 @@ class QuickEdit(tk.Tk):
         playback = tk.Menu(menu, tearoff=False)
         playback.add_command(label="Play or Pause\tSpace", command=self.toggle_play)
         playback.add_command(label="Restart Current Song\tF2", command=self.master_play)
-        playback.add_command(label="Stop", command=lambda: self.stop(announce=True))
+        playback.add_command(label="Stop\tBackspace", command=lambda: self.stop(announce=True))
         playback.add_command(label="Playback Speed", command=self.set_playback_speed)
+        playback.add_command(label="Volume Up\tCtrl+Up", command=lambda: self.adjust_playback_volume(5))
+        playback.add_command(label="Volume Down\tCtrl+Down", command=lambda: self.adjust_playback_volume(-5))
+        playback.add_command(label="Previous Song\tCtrl+Left", command=lambda: self.play_adjacent_library_song(-1))
+        playback.add_command(label="Next Song\tCtrl+Right", command=lambda: self.play_adjacent_library_song(1))
         playback.add_command(label="Choose Output Device", command=self.choose_output_device)
         menu.add_cascade(label="Playback", menu=playback)
         now_playing = tk.Menu(menu, tearoff=False)
@@ -748,10 +756,16 @@ class QuickEdit(tk.Tk):
             callback = self.announce_status
         elif key == "space":
             callback = self.play_selection if shift else self.toggle_play
+        elif self.workspace_mode == "library" and key == "backspace":
+            callback = lambda: self.stop(announce=True)
         elif key == "home":
             callback = lambda: self.set_cursor_frame(0)
         elif key == "end":
             callback = lambda: self.set_cursor_frame(self.document.frame_count if self.document else 0)
+        elif self.workspace_mode == "library" and key == "left" and control and not alt and not shift:
+            callback = lambda: self.play_adjacent_library_song(-1)
+        elif self.workspace_mode == "library" and key == "right" and control and not alt and not shift:
+            callback = lambda: self.play_adjacent_library_song(1)
         elif key == "left" and control and alt:
             callback = lambda: self.play_adjacent_saved_stream(-1)
         elif key == "right" and control and alt:
@@ -766,6 +780,18 @@ class QuickEdit(tk.Tk):
         elif key == "right":
             amount = 1.0 if control else 5.0 if alt else self.navigation_step
             callback = lambda: self.move_cursor(amount)
+        elif self.workspace_mode == "library" and key == "up" and control and shift:
+            callback = lambda: self.adjust_playback_pitch(1.0)
+        elif self.workspace_mode == "library" and key == "down" and control and shift:
+            callback = lambda: self.adjust_playback_pitch(-1.0)
+        elif self.workspace_mode == "library" and key == "up" and control:
+            callback = lambda: self.adjust_playback_volume(5)
+        elif self.workspace_mode == "library" and key == "down" and control:
+            callback = lambda: self.adjust_playback_volume(-5)
+        elif self.workspace_mode == "library" and key == "up" and shift:
+            callback = lambda: self.adjust_playback_speed(0.1)
+        elif self.workspace_mode == "library" and key == "down" and shift:
+            callback = lambda: self.adjust_playback_speed(-0.1)
         elif key == "up" and control:
             callback = lambda: self.adjust_playback_speed(0.1)
         elif key == "down" and control:
@@ -1103,6 +1129,8 @@ class QuickEdit(tk.Tk):
         def open_song(event=None) -> str:
             selected = choices.curselection()
             if selected:
+                self.library_queue = [item[1] for item in items]
+                self.library_queue_index = selected[0]
                 path = items[selected[0]][1]; dialog.destroy(); self._open_path(path); self.master_play()
             return "break"
         def close(event=None) -> str: dialog.destroy(); return "break"
@@ -1442,7 +1470,7 @@ class QuickEdit(tk.Tk):
         try:
             stream = self.online.preview_url(url)
             self.stop_direct_url_preview()
-            self.preview_process = self.media.start_playback(stream, self.output_device, streaming=True)
+            self.preview_process = self.media.start_playback(stream, self.output_device, streaming=True, volume=self.playback_volume)
             self.announce(f"Streaming {name}. A rolling buffer of up to 30 minutes is enabled when the station permits seeking.")
         except (MediaError, OSError) as exc:
             messagebox.showerror("Could not preview URL", str(exc), parent=self)
@@ -3226,6 +3254,7 @@ class QuickEdit(tk.Tk):
             self.set_status(f"Playback pitch {value:g} semitones.")
 
     def adjust_playback_speed(self, amount: float) -> None:
+        self.playback_preset_one_shot = False
         self._apply_playback_speed(max(0.1, min(8.0, round(self.playback_speed + amount, 2))))
         self.set_status(f"Playback speed {self.playback_speed * 100:g} percent.")
 
@@ -3235,8 +3264,31 @@ class QuickEdit(tk.Tk):
         self.set_status(f"Playback pitch {self.playback_pitch_semitones:g} semitones.")
 
     def set_playback_speed_preset(self, speed: float) -> None:
+        self.playback_preset_one_shot = True
         self._apply_playback_speed(speed)
         self.set_status(f"Playback speed {speed * 100:g} percent.")
+
+    def adjust_playback_volume(self, amount: int) -> None:
+        self.playback_volume = max(0, min(150, self.playback_volume + amount))
+        changed = False
+        for process in (self.play_process, self.preview_process):
+            if process and process.poll() is None:
+                changed = self.media.set_playback_volume(process, self.playback_volume) or changed
+        self.set_status(f"Playback volume {self.playback_volume} percent.")
+        if not changed:
+            self.screen_reader.speak(f"Playback volume {self.playback_volume} percent. This applies when playback starts.")
+
+    def play_adjacent_library_song(self, direction: int) -> None:
+        queue = [path for path in self.library_queue if os.path.isfile(path)]
+        if not queue:
+            queue = [path for path in self.library_files if os.path.isfile(path)]
+        if not queue:
+            self.announce("There is no library song queue. Open a song from Library View first."); return
+        current = os.path.abspath(self.document.source_path) if self.document and os.path.isfile(self.document.source_path) else ""
+        try: index = next(i for i, path in enumerate(queue) if os.path.normcase(os.path.abspath(path)) == os.path.normcase(current))
+        except StopIteration: index = self.library_queue_index if 0 <= self.library_queue_index < len(queue) else 0
+        self.library_queue = queue; self.library_queue_index = (index + direction) % len(queue)
+        self._open_path(queue[self.library_queue_index]); self.master_play()
 
     def _apply_playback_speed(self, speed: float) -> None:
         was_playing = self.playing and self.document is not None
@@ -3258,6 +3310,7 @@ class QuickEdit(tk.Tk):
 
     def reset_playback_speed_pitch(self) -> None:
         self.playback_speed = 1.0
+        self.playback_preset_one_shot = False
         self.playback_pitch_semitones = 0.0
         self._restart_for_playback_setting()
         self.set_status("Playback speed and pitch reset.")
@@ -3849,7 +3902,7 @@ class QuickEdit(tk.Tk):
             messagebox.showerror("Playback pitch failed", str(exc), parent=self)
             return
         self.playback_time_factor = self.playback_speed * (pitch_factor if self.playback_pitch_semitones and not self.playback_pitch_preserves_speed else 1.0)
-        self.play_process = self.media.start_playback(path, self.output_device, self.playback_speed)
+        self.play_process = self.media.start_playback(path, self.output_device, self.playback_speed, volume=self.playback_volume)
         if self.play_process is None:
             winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
         self.playing = True
@@ -3960,6 +4013,9 @@ class QuickEdit(tk.Tk):
         was_playing = self.playing
         self.playing = False
         self.paused = preserve_pause
+        if self.playback_preset_one_shot and was_playing:
+            self.playback_speed = 1.0
+            self.playback_preset_one_shot = False
         if self.temp_play_path:
             try:
                 os.remove(self.temp_play_path)

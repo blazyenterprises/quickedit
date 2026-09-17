@@ -259,7 +259,7 @@ class MediaBackend:
             creationflags=CREATE_NO_WINDOW,
         )
 
-    def start_playback(self, wav_path: str, output_device: str = "auto", speed: float = 1.0, streaming: bool = False):
+    def start_playback(self, wav_path: str, output_device: str = "auto", speed: float = 1.0, streaming: bool = False, volume: int = 100):
         if not self.mpv:
             return None
         ipc_path = rf"\\.\pipe\quickedit-mpv-{uuid.uuid4().hex}"
@@ -267,7 +267,7 @@ class MediaBackend:
         process = subprocess.Popen(
             [
                 self.mpv, "--no-config", "--no-video", "--really-quiet",
-                f"--audio-device={output_device}", f"--speed={speed:.8g}",
+                f"--audio-device={output_device}", f"--speed={speed:.8g}", f"--volume={volume}",
                 "--audio-pitch-correction=yes", f"--input-ipc-server={ipc_path}", *streaming_options, wav_path,
             ],
             stdin=subprocess.DEVNULL,
@@ -286,6 +286,9 @@ class MediaBackend:
 
     def set_playback_speed(self, process, speed: float) -> bool:
         return self._send_mpv_command(process, ["set_property", "speed", speed])
+
+    def set_playback_volume(self, process, volume: int) -> bool:
+        return self._send_mpv_command(process, ["set_property", "volume", volume])
 
     @staticmethod
     def _send_mpv_command(process, command: list) -> bool:

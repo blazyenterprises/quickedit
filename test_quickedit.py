@@ -75,6 +75,7 @@ class PlaybackSettingTests(unittest.TestCase):
         editor.playback_speed = 1.0
         editor.playback_pitch_semitones = 0.0
         editor.playing = False
+        editor.playback_preset_one_shot = False
         editor.document = None
         editor._restart_for_playback_setting = lambda: None
         editor.spoken_messages = []
@@ -99,6 +100,12 @@ class PlaybackSettingTests(unittest.TestCase):
         self.assertEqual((editor.playback_speed, editor.playback_pitch_semitones), (1.0, 0.0))
         self.assertEqual(editor.spoken_messages, [])
         self.assertEqual(editor.status_messages[-1], "Playback speed and pitch reset.")
+
+    def test_double_speed_preset_is_marked_one_shot(self):
+        editor = self.editor_stub()
+        editor.set_playback_speed_preset(2.0)
+        self.assertEqual(editor.playback_speed, 2.0)
+        self.assertTrue(editor.playback_preset_one_shot)
 
 
 class ReversePlaybackTests(unittest.TestCase):

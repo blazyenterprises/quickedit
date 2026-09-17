@@ -63,6 +63,13 @@ class MediaEncodingTests(unittest.TestCase):
         self.assertIn("--cache-secs=1800", command)
         self.assertTrue(process.quickedit_ipc_path.startswith(r"\\.\pipe\quickedit-mpv-"))
 
+    def test_volume_control_uses_mpv_property(self):
+        backend = object.__new__(MediaBackend)
+        commands = []
+        backend._send_mpv_command = lambda process, command: commands.append(command) or True
+        self.assertTrue(backend.set_playback_volume(object(), 85))
+        self.assertEqual(commands, [["set_property", "volume", 85]])
+
 
 if __name__ == "__main__":
     unittest.main()
