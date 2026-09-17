@@ -960,12 +960,26 @@ class QuickEdit(tk.Tk):
 
     def bind_accessible_combobox(self, box: ttk.Combobox, label: str, variable: tk.StringVar) -> None:
         """Announce a combo box reliably on focus and selection changes."""
-        def announce(event=None) -> None:
+        pending_announcement: list[str | None] = [None]
+        def announce_focus(event=None) -> None:
             self.after(80, lambda: self.screen_reader.speak(
                 f"{label}, combo box, current value {variable.get().strip() or 'blank'}."
             ) if self.focus_get() is box else None)
-        box.bind("<FocusIn>", announce, add="+")
-        box.bind("<<ComboboxSelected>>", announce, add="+")
+
+        def announce_value(event=None) -> None:
+            # A ttk drop-down temporarily gives focus to its pop-up window, so
+            # selection speech must not depend on focus still being on `box`.
+            if pending_announcement[0] is not None:
+                try: self.after_cancel(pending_announcement[0])
+                except (tk.TclError, ValueError): pass
+            pending_announcement[0] = self.after(60, lambda: self.screen_reader.speak(
+                f"{label}, {variable.get().strip() or 'blank'}."
+            ))
+
+        box.bind("<FocusIn>", announce_focus, add="+")
+        box.bind("<<ComboboxSelected>>", announce_value, add="+")
+        box.bind("<KeyRelease-Up>", announce_value, add="+")
+        box.bind("<KeyRelease-Down>", announce_value, add="+")
 
     def bind_accessible_text(self, widget: tk.Text, label: str) -> None:
         """Add dependable NVDA feedback to a multiline Tk edit control."""
@@ -3398,7 +3412,15 @@ class QuickEdit(tk.Tk):
         self.accessible_button(buttons, "Insert Speech at Cursor", insert).pack(side="left", padx=6)
         self.accessible_button(buttons, "Save Speech Audio", save_audio).pack(side="left")
         self.accessible_button(buttons, "Close", dialog.destroy).pack(side="right")
-        dialog.bind("<Escape>", lambda event: dialog.destroy()); refresh_voices(); engine_box.focus_set()
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+        refresh_voices()
+        def activate_first_control() -> None:
+            try:
+                engine_box.focus_force()
+                self.screen_reader.speak(f"Speech engine, combo box, current value {engine_var.get()}.")
+            except tk.TclError:
+                pass
+        dialog.after(150, activate_first_control)
 
     def censor_selection(self) -> None:
         document = self.require_document()
