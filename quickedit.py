@@ -23,7 +23,7 @@ from theme_manager import ThemeManager
 import audio_effects
 import signal_generator
 from soundfont_tools import Preset, list_presets, one_note_midi
-from midi_sample_renderer import render_midi_with_sample
+from midi_sample_renderer import filter_midi_channels, render_midi_with_sample
 
 # PyInstaller's Tk hook still points Python 3.14 at pre-3.14 library folders.
 # Tcl/Tk 9 carries its standard library in zipfs, so let it use that default.
@@ -268,6 +268,8 @@ class QuickEdit(tk.Tk):
         self.library_files: list[str] = []
         self.library_playlists: dict[str, list[str]] = {}
         self.library_sort_mode = "track"
+        self.repeat_mode = "off"
+        self.muted_midi_channels: set[int] = set()
         self.saved_streams: list[dict[str, str]] = []
         self.current_saved_stream_index = -1
         self.library_queue: list[str] = []
@@ -283,6 +285,7 @@ class QuickEdit(tk.Tk):
         self.details_var = tk.StringVar(value="No audio is open.")
         self.workspace_var = tk.StringVar(value=self.workspace_mode)
         self.library_sort_var = tk.StringVar(value=self.library_sort_mode)
+        self.repeat_mode_var = tk.StringVar(value=self.repeat_mode)
         self.workspace_heading_var = tk.StringVar(value={"editor": "Editor View", "library": "Library View", "daw": "DAW View"}[self.workspace_mode])
         self._build_menu()
         self._build_ui()
@@ -395,6 +398,10 @@ class QuickEdit(tk.Tk):
         transport.add_command(label="Playback Pitch\tAlt+Up/Down", command=self.set_playback_pitch)
         transport.add_command(label="Reset Playback Speed and Pitch\tCtrl+Alt+0", command=self.reset_playback_speed_pitch)
         transport.add_checkbutton(label="Preserve Speed When Changing Playback Pitch", variable=self.playback_pitch_preserve_var, command=self.toggle_playback_pitch_mode)
+        repeat_menu = tk.Menu(transport, tearoff=False)
+        for label, mode in (("Repeat Off", "off"), ("Repeat All", "all"), ("Repeat One Track", "one")):
+            repeat_menu.add_radiobutton(label=label, variable=self.repeat_mode_var, value=mode, command=lambda selected=mode: self.set_repeat_mode(selected))
+        transport.add_cascade(label="Repeat Mode", menu=repeat_menu)
         menu.add_cascade(label="Transport", menu=transport)
 
         record = tk.Menu(menu, tearoff=False)
@@ -407,6 +414,7 @@ class QuickEdit(tk.Tk):
         midi_menu.add_command(label="Choose SoundFont", command=self.choose_soundfont)
         midi_menu.add_command(label="Re-render MIDI with Current SoundFont", command=self.rerender_midi)
         midi_menu.add_command(label="Render MIDI with One Sample", command=self.render_midi_with_one_sample)
+        midi_menu.add_command(label="Mute or Unmute MIDI Channels", command=self.configure_midi_channels)
         midi_menu.add_command(label="Virtual MIDI and Sample Keyboard", command=self.virtual_midi_keyboard)
         menu.add_cascade(label="MIDI and SoundFonts", menu=midi_menu)
 
@@ -500,6 +508,10 @@ class QuickEdit(tk.Tk):
         playback.add_command(label="Volume Down\tCtrl+Down", command=lambda: self.adjust_playback_volume(-5))
         playback.add_command(label="Previous Song\tCtrl+Left", command=lambda: self.play_adjacent_library_song(-1))
         playback.add_command(label="Next Song\tCtrl+Right", command=lambda: self.play_adjacent_library_song(1))
+        repeat_menu = tk.Menu(playback, tearoff=False)
+        for label, mode in (("Repeat Off", "off"), ("Repeat All", "all"), ("Repeat One Track", "one")):
+            repeat_menu.add_radiobutton(label=label, variable=self.repeat_mode_var, value=mode, command=lambda selected=mode: self.set_repeat_mode(selected))
+        playback.add_cascade(label="Repeat Mode", menu=repeat_menu)
         playback.add_command(label="Choose Output Device", command=self.choose_output_device)
         menu.add_cascade(label="Playback", menu=playback)
         now_playing = tk.Menu(menu, tearoff=False)
@@ -557,6 +569,7 @@ class QuickEdit(tk.Tk):
         instruments.add_command(label="Choose SoundFont", command=self.choose_soundfont)
         instruments.add_command(label="Re-render MIDI with Current SoundFont", command=self.rerender_midi)
         instruments.add_command(label="Render MIDI with One Sample", command=self.render_midi_with_one_sample)
+        instruments.add_command(label="Mute or Unmute MIDI Channels", command=self.configure_midi_channels)
         instruments.add_separator()
         instruments.add_command(label="Open VST2 and VST3 Rack", command=self.open_carla_host)
         instruments.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
@@ -576,6 +589,10 @@ class QuickEdit(tk.Tk):
         transport.add_command(label="Play from Start\tF2", command=self.master_play)
         transport.add_command(label="Play Selection\tShift+Space", command=self.play_selection)
         transport.add_command(label="Go to Time\tCtrl+G", command=self.go_to_time)
+        repeat_menu = tk.Menu(transport, tearoff=False)
+        for label, mode in (("Repeat Off", "off"), ("Repeat All", "all"), ("Repeat One Track", "one")):
+            repeat_menu.add_radiobutton(label=label, variable=self.repeat_mode_var, value=mode, command=lambda selected=mode: self.set_repeat_mode(selected))
+        transport.add_cascade(label="Repeat Mode", menu=repeat_menu)
         menu.add_cascade(label="Transport", menu=transport)
         self._add_workspace_menu(menu); self.config(menu=menu); self._apply_menu_mnemonics(menu)
 
@@ -1002,6 +1019,9 @@ class QuickEdit(tk.Tk):
             self.library_playlists = {str(name): [str(path) for path in paths] for name, paths in raw_playlists.items()} if isinstance(raw_playlists, dict) else {}
             sort_mode = str(settings.get("library_sort_mode", self.__dict__.get("library_sort_mode", "track")))
             self.library_sort_mode = sort_mode if sort_mode in {"track", "title", "artist", "album", "added", "shuffle"} else "track"
+            repeat_mode = str(settings.get("repeat_mode", self.__dict__.get("repeat_mode", "off")))
+            self.repeat_mode = repeat_mode if repeat_mode in {"off", "all", "one"} else "off"
+            self.muted_midi_channels = {int(channel) for channel in settings.get("muted_midi_channels", []) if str(channel).isdigit() and 0 <= int(channel) < 16}
             raw_streams = settings.get("saved_streams", self.__dict__.get("saved_streams", []))
             self.saved_streams = [item for item in raw_streams if isinstance(item, dict) and item.get("url")]
             soundfont_path = str(settings.get("soundfont_path", self.__dict__.get("soundfont_path", "")))
@@ -1028,6 +1048,8 @@ class QuickEdit(tk.Tk):
             library_files=self.__dict__.get("library_files", []),
             library_playlists=self.__dict__.get("library_playlists", {}),
             library_sort_mode=self.__dict__.get("library_sort_mode", "track"),
+            repeat_mode=self.__dict__.get("repeat_mode", "off"),
+            muted_midi_channels=sorted(self.__dict__.get("muted_midi_channels", set())),
             saved_streams=self.__dict__.get("saved_streams", []),
             soundfont_path=self.__dict__.get("soundfont_path") or "",
         )
@@ -1140,6 +1162,14 @@ class QuickEdit(tk.Tk):
         self._save_file_history()
         names = {"track": "album, disc, and track number", "title": "song title", "artist": "artist", "album": "album", "added": "newest added first", "shuffle": "shuffle"}
         self.announce(f"Library ordering set to {names[mode]}.")
+
+    def set_repeat_mode(self, mode: str) -> None:
+        if mode not in {"off", "all", "one"}:
+            return
+        self.repeat_mode = mode
+        self.repeat_mode_var.set(mode)
+        self._save_file_history()
+        self.announce({"off": "Repeat is off.", "all": "Repeat all is on.", "one": "Repeat one track is on."}[mode])
 
     def _selected_library_sort_key(self, tags: dict[str, str], title: str, artist: str, album: str, added_index: int) -> tuple:
         disc = self._metadata_number(tags.get("disc"), 1)
@@ -3354,7 +3384,14 @@ class QuickEdit(tk.Tk):
         current = os.path.abspath(self.document.source_path) if self.document and os.path.isfile(self.document.source_path) else ""
         try: index = next(i for i, path in enumerate(queue) if os.path.normcase(os.path.abspath(path)) == os.path.normcase(current))
         except StopIteration: index = self.library_queue_index if 0 <= self.library_queue_index < len(queue) else 0
-        self.library_queue = queue; self.library_queue_index = (index + direction) % len(queue)
+        target = index + direction
+        if not 0 <= target < len(queue):
+            if self.repeat_mode == "all":
+                target %= len(queue)
+            else:
+                self.announce("Reached the end of the library queue. Repeat all is off.")
+                return
+        self.library_queue = queue; self.library_queue_index = target
         self._open_path(queue[self.library_queue_index]); self.master_play()
 
     def _apply_playback_speed(self, speed: float) -> None:
@@ -3829,6 +3866,46 @@ class QuickEdit(tk.Tk):
         if rerender and self.document and self.document.midi_path:
             self.rerender_midi()
 
+    def configure_midi_channels(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Mute or Unmute MIDI Channels")
+        dialog.transient(self); dialog.grab_set()
+        tk.Label(dialog, text="Checked channels are audible. Uncheck a channel to mute it on the next MIDI render.").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 8)
+        )
+        variables: list[tk.BooleanVar] = []
+        checks: list[ttk.Checkbutton] = []
+        for channel in range(16):
+            variable = tk.BooleanVar(value=channel not in self.muted_midi_channels)
+            label = f"Channel {channel + 1}" + ("; General MIDI percussion" if channel == 9 else "")
+            check = ttk.Checkbutton(dialog, text=label, variable=variable, takefocus=True)
+            check.grid(row=channel // 2 + 1, column=channel % 2, sticky="w", padx=12, pady=3)
+            variables.append(variable); checks.append(check)
+        buttons = tk.Frame(dialog); buttons.grid(row=9, column=0, columnspan=2, sticky="ew", padx=12, pady=12)
+
+        def set_all(audible: bool) -> None:
+            for variable in variables:
+                variable.set(audible)
+            self.screen_reader.speak("All MIDI channels unmuted." if audible else "All MIDI channels muted.")
+
+        def save(event=None) -> str:
+            self.muted_midi_channels = {channel for channel, variable in enumerate(variables) if not variable.get()}
+            self._save_file_history()
+            count = len(self.muted_midi_channels)
+            dialog.destroy()
+            self.announce(f"MIDI channel settings saved. {count} channel{' is' if count == 1 else 's are'} muted. Re-render the MIDI to apply them.")
+            return "break"
+
+        def cancel(event=None) -> str:
+            dialog.destroy(); return "break"
+
+        self.accessible_button(buttons, "Unmute All Channels", lambda: set_all(True)).pack(side="left")
+        self.accessible_button(buttons, "Mute All Channels", lambda: set_all(False)).pack(side="left", padx=8)
+        self.accessible_button(buttons, "Save Channel Settings", save).pack(side="left")
+        self.accessible_button(buttons, "Cancel", cancel).pack(side="right")
+        dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel)
+        checks[0].focus_set()
+
     def rerender_midi(self) -> None:
         document = self.document
         if not document or not document.midi_path:
@@ -3840,19 +3917,28 @@ class QuickEdit(tk.Tk):
             return
         handle, path = tempfile.mkstemp(prefix="quickedit-midi-", suffix=".wav")
         os.close(handle)
+        filtered_path = ""
         try:
-            self.media.render_midi(document.midi_path, self.soundfont_path, path, document.frame_rate)
+            midi_source = document.midi_path
+            if self.muted_midi_channels:
+                filtered_handle, filtered_path = tempfile.mkstemp(prefix="quickedit-midi-channels-", suffix=".mid")
+                os.close(filtered_handle)
+                filter_midi_channels(document.midi_path, filtered_path, self.muted_midi_channels)
+                midi_source = filtered_path
+            self.media.render_midi(midi_source, self.soundfont_path, path, document.frame_rate)
             with wave.open(path, "rb") as source:
                 new_frames = source.readframes(source.getnframes())
                 channels = source.getnchannels()
                 sample_width = source.getsampwidth()
                 frame_rate = source.getframerate()
-        except (MediaError, wave.Error, OSError) as exc:
+        except (MediaError, wave.Error, OSError, ValueError) as exc:
             messagebox.showerror("Could not render MIDI", str(exc), parent=self)
             return
         finally:
             if os.path.isfile(path):
                 os.remove(path)
+            if filtered_path and os.path.isfile(filtered_path):
+                os.remove(filtered_path)
         self.stop(announce=False)
         self._checkpoint()
         document.channels = channels
@@ -3896,7 +3982,9 @@ class QuickEdit(tk.Tk):
         os.close(decoded_handle); os.close(rendered_handle)
         try:
             self.media.decode_to_format(sample_path, decoded_path, document.frame_rate, document.channels, 2)
-            render_midi_with_sample(document.midi_path, decoded_path, rendered_path, root_note, document.frame_rate)
+            render_midi_with_sample(
+                document.midi_path, decoded_path, rendered_path, root_note, document.frame_rate, self.muted_midi_channels
+            )
             with wave.open(rendered_path, "rb") as source:
                 new_frames = source.readframes(source.getnframes())
                 channels, sample_width, frame_rate = source.getnchannels(), source.getsampwidth(), source.getframerate()
@@ -4103,7 +4191,17 @@ class QuickEdit(tk.Tk):
         self.refresh_details()
         if finished:
             endpoint = self.document.cursor_frame
+            forward = self.play_direction > 0
             self.stop(announce=False)
+            if forward and self.repeat_mode == "one":
+                self.master_play()
+                return
+            if forward and self.repeat_mode == "all":
+                if self.library_queue:
+                    self.play_adjacent_library_song(1)
+                else:
+                    self.master_play()
+                return
             self.announce(
                 f"Playback finished at {format_time(self.document.seconds_at(endpoint))}."
             )

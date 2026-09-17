@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class MidiNote:
+    channel: int
     note: int
     velocity: int
     start_tick: int
@@ -78,9 +79,9 @@ def read_midi_notes(path: str) -> tuple[int, list[tuple[int, int]], list[MidiNot
                 pending = active.get((channel, payload[0]), [])
                 if pending:
                     start, velocity = pending.pop(0)
-                    notes.append(MidiNote(payload[0], velocity, start, max(start + 1, tick)))
+                    notes.append(MidiNote(channel, payload[0], velocity, start, max(start + 1, tick)))
         for (_channel, note), pending in active.items():
-            notes.extend(MidiNote(note, velocity, start, max(start + 1, tick)) for start, velocity in pending)
+            notes.extend(MidiNote(_channel, note, velocity, start, max(start + 1, tick)) for start, velocity in pending)
     return division, sorted(set(tempos)), notes
 
 
@@ -97,8 +98,16 @@ def _tempo_map(division: int, tempos: list[tuple[int, int]]) -> tuple[list[int],
     return ticks, seconds, values
 
 
-def render_midi_with_sample(midi_path: str, sample_path: str, target_path: str, root_note: int = 60, sample_rate: int = 44100) -> None:
+def render_midi_with_sample(
+    midi_path: str,
+    sample_path: str,
+    target_path: str,
+    root_note: int = 60,
+    sample_rate: int = 44100,
+    muted_channels: set[int] | None = None,
+) -> None:
     division, tempos, notes = read_midi_notes(midi_path)
+    notes = [note for note in notes if note.channel not in (muted_channels or set())]
     if not notes:
         raise ValueError("The MIDI file contains no notes.")
     with wave.open(sample_path, "rb") as source:
@@ -136,3 +145,71 @@ def render_midi_with_sample(midi_path: str, sample_path: str, target_path: str, 
         target.setsampwidth(2)
         target.setframerate(sample_rate)
         target.writeframes(encoded.tobytes())
+
+
+def _encode_variable(value: int) -> bytes:
+    encoded = [value & 0x7F]
+    while value := value >> 7:
+        encoded.append((value & 0x7F) | 0x80)
+    return bytes(reversed(encoded))
+
+
+def filter_midi_channels(source_path: str, target_path: str, muted_channels: set[int]) -> None:
+    """Copy a standard MIDI file while removing voice events on muted channels."""
+    with open(source_path, "rb") as source:
+        data = source.read()
+    if data[:4] != b"MThd" or len(data) < 14:
+        raise ValueError("That file is not a standard MIDI file.")
+    header_size = struct.unpack_from(">I", data, 4)[0]
+    track_count = struct.unpack_from(">H", data, 10)[0]
+    position = 8 + header_size
+    output = bytearray(data[:position])
+    for _ in range(track_count):
+        if data[position:position + 4] != b"MTrk":
+            raise ValueError("The MIDI track directory is damaged.")
+        size = struct.unpack_from(">I", data, position + 4)[0]
+        position += 8
+        track, position = data[position:position + size], position + size
+        cursor = pending_delta = 0
+        running = None
+        rebuilt = bytearray()
+        while cursor < len(track):
+            delta, cursor = _variable(track, cursor)
+            status = track[cursor]
+            explicit_status = bool(status & 0x80)
+            if explicit_status:
+                cursor += 1
+                if status < 0xF0:
+                    running = status
+            elif running is not None:
+                status = running
+            else:
+                raise ValueError("MIDI running status appeared before a status byte.")
+            if status == 0xFF:
+                kind = track[cursor]; cursor += 1
+                length, after_length = _variable(track, cursor)
+                payload = track[after_length:after_length + length]
+                cursor = after_length + length
+                event = bytes((0xFF, kind)) + _encode_variable(length) + payload
+                keep = True
+            elif status in (0xF0, 0xF7):
+                length, after_length = _variable(track, cursor)
+                payload = track[after_length:after_length + length]
+                cursor = after_length + length
+                event = bytes((status,)) + _encode_variable(length) + payload
+                keep = True
+            else:
+                kind = status & 0xF0
+                length = 1 if kind in (0xC0, 0xD0) else 2
+                payload = track[cursor:cursor + length]; cursor += length
+                event = bytes((status,)) + payload
+                keep = (status & 0x0F) not in muted_channels
+            if keep:
+                rebuilt.extend(_encode_variable(pending_delta + delta))
+                rebuilt.extend(event)
+                pending_delta = 0
+            else:
+                pending_delta += delta
+        output.extend(b"MTrk" + struct.pack(">I", len(rebuilt)) + rebuilt)
+    with open(target_path, "wb") as target:
+        target.write(output)

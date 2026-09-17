@@ -163,6 +163,8 @@ class FileHistoryTests(unittest.TestCase):
             editor.library_files = [os.path.join(temp_folder, "library.flac")]
             editor.library_playlists = {"Road Trip": [os.path.join(temp_folder, "favorite.flac")]}
             editor.library_sort_mode = "shuffle"
+            editor.repeat_mode = "one"
+            editor.muted_midi_channels = {1, 9, 15}
             editor.saved_streams = [{"name": "Example Radio", "url": "https://radio.example/stream", "provider": "Direct"}]
             editor.soundfont_path = os.path.join(temp_folder, "remembered.sf2")
             with open(editor.soundfont_path, "wb") as soundfont:
@@ -183,6 +185,8 @@ class FileHistoryTests(unittest.TestCase):
             self.assertEqual(restored.library_files, editor.library_files)
             self.assertEqual(restored.library_playlists, editor.library_playlists)
             self.assertEqual(restored.library_sort_mode, "shuffle")
+            self.assertEqual(restored.repeat_mode, "one")
+            self.assertEqual(restored.muted_midi_channels, {1, 9, 15})
             self.assertEqual(restored.saved_streams, editor.saved_streams)
             self.assertEqual(restored.soundfont_path, editor.soundfont_path)
 

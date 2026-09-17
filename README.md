@@ -125,7 +125,10 @@ presets use their real names, banks, and program numbers, including percussion
 banks. **Render MIDI with One Sample** turns a selected audio sample into a
 polyphonic instrument for the entire open MIDI file. It preserves tempo,
 velocity, chords, and note lengths while intentionally using that one sample
-for every MIDI channel. Up and Down choose MIDI notes, Space previews, Enter inserts, and the
+for every audible MIDI channel. **Mute or Unmute MIDI Channels** provides an
+accessible checklist for all 16 channels, including an explicit percussion
+label for channel 10. Those settings are remembered and apply to both
+SoundFont and one-sample rendering. Up and Down choose MIDI notes, Space previews, Enter inserts, and the
 letter row can be played as a chromatic keyboard. Raw PCM import asks for its sample rate, channel
 count, and bit depth because headerless PCM cannot contain that information
 itself.
@@ -133,6 +136,9 @@ itself.
 Library View can order songs by album/disc/track number, title, artist, album,
 or newest-added order. Shuffle mode randomizes the active queue, and the chosen
 ordering is remembered after QuickEdit closes.
+Repeat Off stops at the queue boundary, Repeat All advances through and wraps
+the active queue, and Repeat One Track restarts the current file automatically.
+The repeat choice is available in every workspace and is remembered.
 
 The **Generate and Censor** menu creates sine, square, triangle, sawtooth,
 white-noise, and pink-noise signals. It also generates adjustable DTMF and MF
