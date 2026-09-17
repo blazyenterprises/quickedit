@@ -7,6 +7,15 @@ import tts_backend
 
 
 class TtsBackendTests(unittest.TestCase):
+    def test_windows_voice_listing_keeps_every_balcon_voice(self):
+        listing = "SAPI 4:\n  Alex :: Adult Male\n  Mary :: Female Voice\nSAPI 5:\n  Zira :: Microsoft Zira Desktop\n"
+        with patch("tts_backend.balcon_path", return_value="balcon.exe"), patch("tts_backend._run", return_value=listing):
+            self.assertEqual(tts_backend.windows_voices(), [
+                "SAPI 4: Alex :: Adult Male",
+                "SAPI 4: Mary :: Female Voice",
+                "SAPI 5: Zira :: Microsoft Zira Desktop",
+            ])
+
     def test_openai_request_uses_wav_and_selected_voice(self):
         with tempfile.TemporaryDirectory() as folder, patch("tts_backend._post", return_value=b"RIFFaudio") as post:
             target = os.path.join(folder, "speech.wav")

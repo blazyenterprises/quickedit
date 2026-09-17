@@ -3298,9 +3298,16 @@ class QuickEdit(tk.Tk):
         engines += ["OpenAI", "ElevenLabs", "Microsoft Azure", "Fish Audio", "Amazon Polly", "STAR Server"]
         engine_var = tk.StringVar(value=engines[0]); voice_var = tk.StringVar(); rate_var = tk.StringVar(value="0"); pitch_var = tk.StringVar(value="0"); volume_var = tk.StringVar(value="100")
         tk.Label(dialog, text="Speech engine").pack(anchor="w", padx=12, pady=(12, 2))
-        engine_box = ttk.Combobox(dialog, textvariable=engine_var, values=engines, state="readonly", takefocus=True); engine_box.pack(fill="x", padx=12)
-        tk.Label(dialog, text="Voice name or voice ID").pack(anchor="w", padx=12, pady=(8, 2))
-        voice_box = ttk.Combobox(dialog, textvariable=voice_var, takefocus=True); voice_box.pack(fill="x", padx=12)
+        engine_list = tk.Listbox(dialog, exportselection=False, height=5, takefocus=True)
+        for engine in engines: engine_list.insert("end", engine)
+        engine_list.selection_set(0); engine_list.activate(0); engine_list.pack(fill="x", padx=12)
+        tk.Label(dialog, text="Installed or server voices").pack(anchor="w", padx=12, pady=(8, 2))
+        voice_list = tk.Listbox(dialog, exportselection=False, height=7, takefocus=True)
+        voice_list.pack(fill="x", padx=12)
+        tk.Label(dialog, text="Selected voice name or custom voice ID").pack(anchor="w", padx=12, pady=(8, 2))
+        voice_entry = tk.Entry(dialog, textvariable=voice_var, takefocus=True)
+        voice_entry.pack(fill="x", padx=12)
+        self.bind_accessible_entry(voice_entry, "Selected voice name or custom voice ID", voice_var)
         parameter_row = tk.Frame(dialog); parameter_row.pack(fill="x", padx=12, pady=8)
         parameter_entries = []
         for label, variable in (("Rate", rate_var), ("Pitch", pitch_var), ("Volume", volume_var)):
@@ -3346,9 +3353,25 @@ class QuickEdit(tk.Tk):
                     if not credentials.get("server"): configure(); credentials = CredentialStore("tts-star-server").load_dict()
                     if credentials.get("server"): voices = tts_backend.star_voices(credentials["server"])
             except Exception as exc: messagebox.showerror("Could not list voices", str(exc), parent=dialog)
-            voice_box.configure(values=voices)
-            if voices: voice_var.set(voices[0])
+            voice_list.delete(0, "end")
+            for voice in voices: voice_list.insert("end", voice)
+            if voices:
+                voice_list.selection_set(0); voice_list.activate(0); voice_list.see(0)
+                voice_var.set(voices[0])
             elif engine in {"OpenAI", "ElevenLabs", "Microsoft Azure", "Fish Audio", "Amazon Polly"}: voice_var.set("")
+
+        def engine_changed(event=None) -> None:
+            selected = engine_list.curselection()
+            if not selected: return
+            engine_var.set(engines[selected[0]])
+            self.screen_reader.speak(f"{engine_var.get()} speech engine, {selected[0] + 1} of {len(engines)}.")
+            refresh_voices()
+
+        def voice_changed(event=None) -> None:
+            selected = voice_list.curselection()
+            if not selected: return
+            voice_var.set(voice_list.get(selected[0]))
+            self.screen_reader.speak(f"{voice_var.get()}, voice, {selected[0] + 1} of {voice_list.size()}.")
 
         def render() -> str:
             text = text_box.get("1.0", "end").strip(); engine = engine_var.get(); voice = voice_var.get().strip()
@@ -3402,9 +3425,10 @@ class QuickEdit(tk.Tk):
             except Exception as exc: messagebox.showerror("Speech generation failed", str(exc), parent=dialog)
             return "break"
 
-        engine_box.bind("<<ComboboxSelected>>", refresh_voices)
-        self.bind_accessible_combobox(engine_box, "Speech engine", engine_var)
-        self.bind_accessible_combobox(voice_box, "Voice name or voice ID", voice_var)
+        engine_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Speech engine list. {engine_var.get()} selected. Use up and down arrows."))
+        engine_list.bind("<<ListboxSelect>>", engine_changed)
+        voice_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Installed or server voices list. {voice_list.size()} voices available. Use up and down arrows."))
+        voice_list.bind("<<ListboxSelect>>", voice_changed)
         self.bind_accessible_text(text_box, "Text to synthesize")
         self.accessible_button(buttons, "Refresh Voices", refresh_voices).pack(side="left")
         self.accessible_button(buttons, "Configure Engine", configure).pack(side="left", padx=6)
@@ -3416,8 +3440,8 @@ class QuickEdit(tk.Tk):
         refresh_voices()
         def activate_first_control() -> None:
             try:
-                engine_box.focus_force()
-                self.screen_reader.speak(f"Speech engine, combo box, current value {engine_var.get()}.")
+                engine_list.focus_force()
+                self.screen_reader.speak(f"Speech engine list. {engine_var.get()} selected. Use up and down arrows.")
             except tk.TclError:
                 pass
         dialog.after(150, activate_first_control)
