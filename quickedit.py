@@ -4244,6 +4244,8 @@ class QuickEdit(tk.Tk):
         temporary_files: list[str] = []
         preview_processes: list[subprocess.Popen] = []
         active_keys: dict[str, subprocess.Popen] = {}
+        active_key_started: dict[str, float] = {}
+        pending_key_releases: dict[str, str] = {}
         sustained_note_cache: dict[tuple, str] = {}
         note_names = ("C", "C sharp", "D", "E flat", "E", "F", "F sharp", "G", "A flat", "A", "B flat", "B")
         notes = list(range(36, 85))
@@ -4480,6 +4482,9 @@ class QuickEdit(tk.Tk):
                 # remains down. One held key must produce one sustained note.
                 if key in active_keys and active_keys[key].poll() is None:
                     return "break"
+                pending = pending_key_releases.pop(key, None)
+                if pending:
+                    dialog.after_cancel(pending)
                 note = keyboard_octave[0] + key_mapping[key]
                 index = notes.index(note)
                 note_list.selection_clear(0, "end"); note_list.selection_set(index); note_list.activate(index); note_list.see(index)
@@ -4491,6 +4496,7 @@ class QuickEdit(tk.Tk):
                     )
                     if process:
                         active_keys[key] = process
+                        active_key_started[key] = time.monotonic()
                 except (OSError, wave.Error, MediaError, ValueError) as exc:
                     messagebox.showerror("Keyboard note failed", str(exc), parent=dialog)
                 return "break"
@@ -4498,16 +4504,36 @@ class QuickEdit(tk.Tk):
 
         def release_key(event) -> str | None:
             key = (event.char or event.keysym).lower()
-            process = active_keys.pop(key, None)
-            if process is not None and process.poll() is None:
-                process.terminate()
+            process = active_keys.get(key)
+            if process is not None:
+                # mpv needs a moment to open the device. A very quick key tap
+                # previously killed it before the first audio buffer played.
+                elapsed = time.monotonic() - active_key_started.get(key, 0.0)
+                delay_ms = max(0, round((0.20 - elapsed) * 1000))
+
+                def finish_release(expected=process, released_key=key) -> None:
+                    pending_key_releases.pop(released_key, None)
+                    if active_keys.get(released_key) is expected:
+                        active_keys.pop(released_key, None)
+                        active_key_started.pop(released_key, None)
+                    if expected.poll() is None:
+                        expected.terminate()
+
+                if delay_ms:
+                    pending_key_releases[key] = dialog.after(delay_ms, finish_release)
+                else:
+                    finish_release()
             return "break" if key in key_mapping or key in {"z", "x"} else None
 
         def release_all_notes(event=None) -> None:
+            for after_id in pending_key_releases.values():
+                dialog.after_cancel(after_id)
+            pending_key_releases.clear()
             for process in active_keys.values():
                 if process.poll() is None:
                     process.terminate()
             active_keys.clear()
+            active_key_started.clear()
 
         def close() -> None:
             release_all_notes()
@@ -4521,11 +4547,16 @@ class QuickEdit(tk.Tk):
             dialog.destroy()
 
         note_list.bind("<space>", preview); note_list.bind("<Return>", insert)
-        # Playable keys must work regardless of which control has focus. In
-        # particular, a file dialog returns focus to the Choose Sample button;
-        # binding only the note list made a successfully loaded sample silent.
-        dialog.bind("<KeyPress>", play_key, add="+")
-        dialog.bind("<KeyRelease>", release_key, add="+")
+        # Bind at the focused-widget level, before Tk's Listbox/Button class
+        # handlers have a chance to consume letter keys. This also lets the
+        # keyboard play while any control in the window has focus.
+        def bind_playable_keys(widget) -> None:
+            widget.bind("<KeyPress>", play_key, add="+")
+            widget.bind("<KeyRelease>", release_key, add="+")
+            for child in widget.winfo_children():
+                bind_playable_keys(child)
+
+        bind_playable_keys(dialog)
         dialog.bind("<FocusOut>", release_all_notes, add="+")
         waveform_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Synth waveform list. {selected_waveform()} selected."))
         waveform_list.bind("<<ListboxSelect>>", waveform_changed)
