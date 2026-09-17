@@ -44,6 +44,17 @@ class BatchConversionTests(unittest.TestCase):
             self.assertTrue(target.endswith("song converted 2.mp3"))
 
 
+class AccessibleEntryTests(unittest.TestCase):
+    def test_left_and_right_announce_character_crossed(self):
+        self.assertEqual(QuickEdit._entry_navigation_text("440", 1, "left"), "4")
+        self.assertEqual(QuickEdit._entry_navigation_text("440", 2, "right"), "4")
+
+    def test_entry_boundaries_and_space_are_named(self):
+        self.assertEqual(QuickEdit._entry_navigation_text("4 0", 1, "left"), "space")
+        self.assertEqual(QuickEdit._entry_navigation_text("440", 0, "left"), "beginning")
+        self.assertEqual(QuickEdit._entry_navigation_text("440", 3, "right"), "end")
+
+
 class DocumentTests(unittest.TestCase):
     def setUp(self):
         self.document = AudioDocument(

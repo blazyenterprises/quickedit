@@ -916,6 +916,32 @@ class QuickEdit(tk.Tk):
                     pass
             self.after(120, speak_after_focus_settles)
         entry.bind("<FocusIn>", announce)
+        if not protected:
+            def announce_caret(event) -> None:
+                key = event.keysym.lower()
+                def speak_after_movement() -> None:
+                    try:
+                        value = str(variable.get())
+                        position = int(entry.index(tk.INSERT))
+                        spoken = self._entry_navigation_text(value, position, key)
+                        if spoken: self.screen_reader.speak(spoken)
+                    except tk.TclError:
+                        pass
+                self.after_idle(speak_after_movement)
+            for sequence in ("<KeyRelease-Left>", "<KeyRelease-Right>", "<KeyRelease-Home>", "<KeyRelease-End>"):
+                entry.bind(sequence, announce_caret, add="+")
+
+    @staticmethod
+    def _entry_navigation_text(value: str, position: int, key: str) -> str:
+        if key == "home" or position <= 0 and key == "left":
+            return "beginning"
+        if key == "end" or position >= len(value) and key == "right":
+            return "end"
+        index = position if key == "left" else position - 1
+        if not 0 <= index < len(value):
+            return "beginning" if position <= 0 else "end"
+        character = value[index]
+        return {" ": "space", "\t": "tab", "\n": "new line"}.get(character, character)
 
     @property
     def navigation_step(self) -> float:
