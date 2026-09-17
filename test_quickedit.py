@@ -25,6 +25,25 @@ class TimeTests(unittest.TestCase):
             parse_time("-1")
 
 
+class BatchConversionTests(unittest.TestCase):
+    def test_batch_output_never_overwrites_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "song.wav")
+            with open(source, "wb"):
+                pass
+            target = QuickEdit._unused_output_path(folder, "song", ".wav", source)
+            self.assertNotEqual(os.path.normcase(target), os.path.normcase(source))
+            self.assertTrue(target.endswith("song converted 2.wav"))
+
+    def test_batch_output_avoids_existing_destination(self):
+        with tempfile.TemporaryDirectory() as folder:
+            existing = os.path.join(folder, "song.mp3")
+            with open(existing, "wb"):
+                pass
+            target = QuickEdit._unused_output_path(folder, "song", ".mp3", os.path.join(folder, "source.wav"))
+            self.assertTrue(target.endswith("song converted 2.mp3"))
+
+
 class DocumentTests(unittest.TestCase):
     def setUp(self):
         self.document = AudioDocument(

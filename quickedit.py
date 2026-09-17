@@ -309,7 +309,7 @@ class QuickEdit(tk.Tk):
         file_menu = tk.Menu(menu, tearoff=False)
         file_menu.add_command(label="New Audio\tCtrl+N", command=self.new_file)
         file_menu.add_command(label="Open Audio\tCtrl+O", command=self.open_file)
-        file_menu.add_command(label="Open Audio with Preview", command=self.open_file_with_preview)
+        file_menu.add_command(label="Open Audio with Preview\tCtrl+Shift+O", command=self.open_file_with_preview)
         self.recent_menu = tk.Menu(file_menu, tearoff=False, postcommand=self._refresh_recent_menu)
         file_menu.add_cascade(label="Recent Files", menu=self.recent_menu)
         self.favorites_menu = tk.Menu(file_menu, tearoff=False, postcommand=self._refresh_favorites_menu)
@@ -317,6 +317,7 @@ class QuickEdit(tk.Tk):
         file_menu.add_command(label="Save\tCtrl+S", command=self.save)
         file_menu.add_command(label="Save As\tCtrl+Shift+S", command=self.save_as)
         file_menu.add_command(label="Output Format Settings", command=self.output_format_settings)
+        file_menu.add_command(label="Batch Convert Audio", command=self.batch_convert_audio)
         file_menu.add_separator()
         file_menu.add_command(label="Edit Audio Tags", command=self.edit_tags)
         file_menu.add_command(label="Fill Tags from Filename", command=self.fill_tags_from_filename)
@@ -487,6 +488,7 @@ class QuickEdit(tk.Tk):
         menu = tk.Menu(self)
         library = tk.Menu(menu, tearoff=False)
         library.add_command(label="Add Audio Files to Library", command=self.add_files_to_library)
+        library.add_command(label="Batch Convert Audio", command=self.batch_convert_audio)
         library.add_command(label="Remove Missing Library Files", command=self.remove_missing_library_files)
         library.add_separator()
         library.add_command(label="Artists", command=lambda: self.browse_library("artist"))
@@ -566,6 +568,8 @@ class QuickEdit(tk.Tk):
         project = tk.Menu(menu, tearoff=False)
         project.add_command(label="New Audio Project\tCtrl+N", command=self.new_file)
         project.add_command(label="Open Audio or MIDI\tCtrl+O", command=self.open_file)
+        project.add_command(label="Open Audio with Preview\tCtrl+Shift+O", command=self.open_file_with_preview)
+        project.add_command(label="Batch Convert Audio", command=self.batch_convert_audio)
         project.add_command(label="Save Project Audio\tCtrl+S", command=self.save)
         project.add_command(label="Save Project Audio As\tCtrl+Shift+S", command=self.save_as)
         project.add_separator(); project.add_command(label="Exit", command=self.destroy)
@@ -861,6 +865,8 @@ class QuickEdit(tk.Tk):
             callback = self.set_selection_end
         elif key == "delete":
             callback = self.delete_selection
+        elif control and shift and key == "o":
+            callback = self.open_file_with_preview
         elif control:
             callback = {
                 "o": self.open_file,
@@ -2277,6 +2283,80 @@ class QuickEdit(tk.Tk):
         self.export_channels = channels
         self.export_bitrate = bitrate
         self.announce(f"Output set to {sample_rate} Hz, {bit_depth}-bit, {channels} channels, {bitrate} kilobits per second for compressed formats.")
+
+    @staticmethod
+    def _unused_output_path(folder: str, stem: str, extension: str, source: str) -> str:
+        candidate = os.path.join(folder, stem + extension)
+        if os.path.normcase(os.path.abspath(candidate)) != os.path.normcase(os.path.abspath(source)) and not os.path.exists(candidate):
+            return candidate
+        number = 2
+        while True:
+            candidate = os.path.join(folder, f"{stem} converted {number}{extension}")
+            if not os.path.exists(candidate):
+                return candidate
+            number += 1
+
+    def batch_convert_audio(self) -> None:
+        sources = list(filedialog.askopenfilenames(
+            title="Choose audio files to batch convert",
+            initialdir=self.last_open_directory if os.path.isdir(self.last_open_directory) else None,
+            filetypes=[("Audio and media files", "*.wav *.mp3 *.flac *.ogg *.oga *.opus *.m4a *.aac *.wma *.aiff *.aif *.au *.snd *.caf *.wv *.mka *.webm *.mov *.mp4 *.3gp *.3g2 *.ac3 *.eac3 *.tta"), ("All files", "*.*")],
+            parent=self,
+        ))
+        if not sources: return
+        destination = filedialog.askdirectory(title="Choose batch conversion destination", initialdir=os.path.dirname(sources[0]), parent=self)
+        if not destination: return
+
+        dialog = tk.Toplevel(self); dialog.title("Batch Conversion Settings"); dialog.transient(self); dialog.grab_set()
+        formats = ("WAV", "MP3", "FLAC", "Ogg Vorbis", "Opus", "M4A AAC", "WMA", "AIFF", "AU", "CAF", "WavPack")
+        extensions = {"WAV": ".wav", "MP3": ".mp3", "FLAC": ".flac", "Ogg Vorbis": ".ogg", "Opus": ".opus", "M4A AAC": ".m4a", "WMA": ".wma", "AIFF": ".aiff", "AU": ".au", "CAF": ".caf", "WavPack": ".wv"}
+        values = {
+            "format": tk.StringVar(value="MP3"), "rate": tk.StringVar(value="44100"),
+            "depth": tk.StringVar(value="16"), "channels": tk.StringVar(value="2"),
+            "bitrate": tk.StringVar(value="192"),
+        }
+        result: list[tuple[str, int, int, int, int]] = []
+        specs = (("Output format", "format"), ("Sample rate in Hertz", "rate"), ("PCM bit depth", "depth"), ("Channels", "channels"), ("Compressed bitrate in kilobits per second", "bitrate"))
+        entries = []
+        for row, (label, key) in enumerate(specs):
+            tk.Label(dialog, text=label).grid(row=row * 2, column=0, sticky="w", padx=12, pady=(8 if row else 12, 2))
+            if key == "format":
+                control = ttk.Combobox(dialog, textvariable=values[key], values=formats, state="readonly", takefocus=True)
+                control.bind("<FocusIn>", lambda event: self.screen_reader.speak("Output format, combo box."))
+            else:
+                control = tk.Entry(dialog, textvariable=values[key], takefocus=True)
+                control.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+            control.grid(row=row * 2 + 1, column=0, sticky="ew", padx=12); entries.append(control)
+        buttons = tk.Frame(dialog); buttons.grid(row=10, column=0, sticky="ew", padx=12, pady=12)
+        def accept(event=None) -> str:
+            try:
+                rate, depth, channels, bitrate = (int(values[key].get()) for key in ("rate", "depth", "channels", "bitrate"))
+                if not 1000 <= rate <= 384000: raise ValueError("Sample rate must be from 1,000 through 384,000.")
+                if depth not in {8, 16, 24, 32}: raise ValueError("PCM bit depth must be 8, 16, 24, or 32.")
+                if not 1 <= channels <= 8: raise ValueError("Channels must be from 1 through 8.")
+                if not 8 <= bitrate <= 1536: raise ValueError("Bitrate must be from 8 through 1,536.")
+            except ValueError as exc:
+                self.screen_reader.speak(str(exc) if str(exc) and not str(exc).startswith("invalid literal") else "All conversion settings except format must be whole numbers."); return "break"
+            result.append((extensions[values["format"].get()], rate, depth, channels, bitrate)); dialog.destroy(); return "break"
+        self.accessible_button(buttons, f"Convert {len(sources)} Files", accept).pack(side="left")
+        self.accessible_button(buttons, "Cancel Batch Conversion", dialog.destroy).pack(side="right")
+        dialog.bind("<Escape>", lambda event: dialog.destroy()); dialog.columnconfigure(0, weight=1); entries[0].focus_set(); self.wait_window(dialog)
+        if not result: return
+        extension, rate, depth, channels, bitrate = result[0]
+        converted = []; failed = []
+        for index, source in enumerate(sources, 1):
+            target = self._unused_output_path(destination, os.path.splitext(os.path.basename(source))[0], extension, source)
+            self.set_status(f"Converting {index} of {len(sources)}: {os.path.basename(source)}"); self.update_idletasks()
+            try:
+                metadata = self._normalized_metadata(self.media.read_metadata(source))
+                self.media.encode(source, target, rate, channels, depth, bitrate, metadata)
+                converted.append(target)
+            except (OSError, MediaError) as exc: failed.append(f"{os.path.basename(source)}: {exc}")
+        if failed:
+            messagebox.showwarning("Batch conversion finished with errors", f"Converted {len(converted)} of {len(sources)} files.\n\n" + "\n".join(failed[:10]), parent=self)
+        else:
+            messagebox.showinfo("Batch conversion complete", f"Converted {len(converted)} files into {destination}.", parent=self)
+        self.announce(f"Batch conversion complete. {len(converted)} succeeded and {len(failed)} failed.")
 
     def _write_wav(self, path: str, frames: bytes) -> None:
         document = self.document

@@ -109,7 +109,8 @@ Audio-only MOV/ALAC, MP4/AAC, 3GP, 3G2, MKA/MKV, and WebM/Opus exports are also
 available. Ordinary **Open Audio** and Save commands use the native Windows file
 dialogs and remember the last folder visited. **Open Audio with Preview** opens
 QuickEdit's separate sound browser when auditioning files before opening is more
-important than Windows Explorer integration. Its Preview checkbox controls
+important than Windows Explorer integration; it is also available with
+`Ctrl+Shift+O`. Its Preview checkbox controls
 auditioning. With Preview enabled,
 moving through files with Up and Down plays the
 highlighted file. Enter opens a file or enters a folder, and Backspace moves to
@@ -117,6 +118,13 @@ the parent folder. Typing a letter jumps to the next filename or folder
 beginning with that letter, with repeated presses cycling matches. Home and End
 jump to the first and last items. Filenames and folder positions are announced
 directly.
+
+**File > Batch Convert Audio** uses the native Windows multi-file and destination
+folder dialogs, then converts every selected file to one chosen output format,
+sample rate, PCM bit depth, channel count, and compressed bitrate. Existing files
+and source files are never overwritten; QuickEdit adds a numbered “converted”
+suffix when a destination name is already occupied. Supported batch targets are
+WAV, MP3, FLAC, Ogg Vorbis, Opus, M4A/AAC, WMA, AIFF, AU, CAF, and WavPack.
 
 MIDI files can be opened through the bundled official FluidSynth 2.6 runtime.
 QuickEdit asks for an SF2 or SF3 SoundFont, renders the MIDI into an editable
