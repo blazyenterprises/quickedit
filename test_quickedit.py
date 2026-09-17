@@ -163,6 +163,9 @@ class FileHistoryTests(unittest.TestCase):
             editor.library_files = [os.path.join(temp_folder, "library.flac")]
             editor.library_playlists = {"Road Trip": [os.path.join(temp_folder, "favorite.flac")]}
             editor.saved_streams = [{"name": "Example Radio", "url": "https://radio.example/stream", "provider": "Direct"}]
+            editor.soundfont_path = os.path.join(temp_folder, "remembered.sf2")
+            with open(editor.soundfont_path, "wb") as soundfont:
+                soundfont.write(b"test")
             editor._save_file_history()
 
             restored = object.__new__(QuickEdit)
@@ -179,6 +182,7 @@ class FileHistoryTests(unittest.TestCase):
             self.assertEqual(restored.library_files, editor.library_files)
             self.assertEqual(restored.library_playlists, editor.library_playlists)
             self.assertEqual(restored.saved_streams, editor.saved_streams)
+            self.assertEqual(restored.soundfont_path, editor.soundfont_path)
 
             with open(restored._history_path, "r", encoding="utf-8") as source:
                 self.assertIn("favorite_files", json.load(source))
@@ -238,6 +242,24 @@ class EffectPresetTests(unittest.TestCase):
 
 
 class MetadataTests(unittest.TestCase):
+    def test_library_track_sort_is_numeric(self):
+        track_two = QuickEdit._library_sort_key(
+            "album", {"disc": "1/1", "track": "2/12"}, "Second", "Artist", "Album"
+        )
+        track_ten = QuickEdit._library_sort_key(
+            "album", {"disc": "1/1", "track": "10/12"}, "Tenth", "Artist", "Album"
+        )
+        self.assertLess(track_two, track_ten)
+
+    def test_library_sort_uses_disc_before_track(self):
+        disc_one = QuickEdit._library_sort_key(
+            "album", {"disc": "1", "track": "12"}, "Last on disc one", "Artist", "Album"
+        )
+        disc_two = QuickEdit._library_sort_key(
+            "album", {"disc": "2", "track": "1"}, "First on disc two", "Artist", "Album"
+        )
+        self.assertLess(disc_one, disc_two)
+
     def test_normalizes_common_tag_aliases(self):
         tags = QuickEdit._normalized_metadata({
             "TRACKNUMBER": "03", "YEAR": "1999", "publisher": "Example Records",

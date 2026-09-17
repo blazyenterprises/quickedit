@@ -985,6 +985,8 @@ class QuickEdit(tk.Tk):
             self.library_playlists = {str(name): [str(path) for path in paths] for name, paths in raw_playlists.items()} if isinstance(raw_playlists, dict) else {}
             raw_streams = settings.get("saved_streams", self.__dict__.get("saved_streams", []))
             self.saved_streams = [item for item in raw_streams if isinstance(item, dict) and item.get("url")]
+            soundfont_path = str(settings.get("soundfont_path", self.__dict__.get("soundfont_path", "")))
+            self.soundfont_path = soundfont_path if os.path.isfile(soundfont_path) else None
         except (OSError, ValueError, TypeError):
             pass
 
@@ -1007,6 +1009,7 @@ class QuickEdit(tk.Tk):
             library_files=self.__dict__.get("library_files", []),
             library_playlists=self.__dict__.get("library_playlists", {}),
             saved_streams=self.__dict__.get("saved_streams", []),
+            soundfont_path=self.__dict__.get("soundfont_path") or "",
         )
         with open(self._history_path, "w", encoding="utf-8") as target:
             json.dump(settings, target, indent=2)
@@ -1094,6 +1097,21 @@ class QuickEdit(tk.Tk):
         removed = before - len(self.library_files)
         self._save_file_history(); self.announce(f"Removed {removed} missing files from the library.")
 
+    @staticmethod
+    def _metadata_number(value: str | None, default: int) -> int:
+        match = re.search(r"\d+", str(value or ""))
+        return int(match.group()) if match else default
+
+    @classmethod
+    def _library_sort_key(cls, category: str, tags: dict[str, str], title: str, artist: str, album: str) -> tuple:
+        disc = cls._metadata_number(tags.get("disc"), 1)
+        track = cls._metadata_number(tags.get("track"), 1_000_000)
+        if category == "artist":
+            return artist.casefold(), album.casefold(), disc, track, title.casefold()
+        if category == "album":
+            return album.casefold(), disc, track, title.casefold(), artist.casefold()
+        return artist.casefold(), album.casefold(), disc, track, title.casefold()
+
     def browse_library(self, category: str, selected_paths: list[str] | None = None) -> None:
         if category == "recent":
             paths = [path for path in self.recent_files if os.path.isfile(path)]
@@ -1112,15 +1130,17 @@ class QuickEdit(tk.Tk):
             except (OSError, MediaError): tags = {}
             title = tags.get("title") or os.path.splitext(os.path.basename(path))[0]
             artist = tags.get("artist", "Unknown artist"); album = tags.get("album", "Unknown album")
-            if category == "artist": label = f"{artist}; {title}; {album}"
-            elif category == "album": label = f"{album}; {title}; {artist}"
-            else: label = f"{title}; {artist}; {album}"
-            items.append((label, path))
-        items.sort(key=lambda item: item[0].casefold())
+            track = tags.get("track", "unknown")
+            if category == "artist": label = f"{artist}; {album}; track {track}; {title}"
+            elif category == "album": label = f"{album}; track {track}; {title}; {artist}"
+            else: label = f"Track {track}; {title}; {artist}; {album}"
+            items.append((label, path, self._library_sort_key(category, tags, title, artist, album)))
+        if category not in {"recent", "favorites", "playlist"} and selected_paths is None:
+            items.sort(key=lambda item: item[2])
         dialog = tk.Toplevel(self); dialog.title(f"Library {category.title()}"); dialog.geometry("760x520"); dialog.transient(self); dialog.grab_set()
         tk.Label(dialog, text=f"{category.title()} list").pack(anchor="w", padx=12, pady=(12, 3))
         choices = tk.Listbox(dialog, exportselection=False, height=22, width=100, takefocus=True)
-        for label, path in items: choices.insert("end", label)
+        for label, path, sort_key in items: choices.insert("end", label)
         choices.selection_set(0); choices.activate(0); choices.pack(fill="both", expand=True, padx=12)
         buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
         def speak(event=None) -> None:
@@ -3562,6 +3582,7 @@ class QuickEdit(tk.Tk):
         soundfont_presets: list[Preset] = []
         instrument_mode = ["synth"]
         temporary_files: list[str] = []
+        preview_processes: list[subprocess.Popen] = []
         note_names = ("C", "C sharp", "D", "E flat", "E", "F", "F sharp", "G", "A flat", "A", "B flat", "B")
         notes = list(range(36, 85))
         waveforms = ("sine", "square", "triangle", "sawtooth", "white noise", "pink noise")
@@ -3637,6 +3658,7 @@ class QuickEdit(tk.Tk):
             preset_list.see(0)
             instrument_mode[0] = "soundfont"
             self.soundfont_path = path
+            self._save_file_history()
             status.set(f"SoundFont {os.path.basename(path)}; {len(presets)} presets available.")
             self.screen_reader.speak(status.get())
 
@@ -3692,8 +3714,14 @@ class QuickEdit(tk.Tk):
         def preview(event=None) -> str:
             try:
                 path = render_note(selected_note())
-                if self.preview_process and self.preview_process.poll() is None: self.preview_process.terminate()
-                self.preview_process = self.media.start_playback(path, self.output_device)
+                preview_processes[:] = [process for process in preview_processes if process.poll() is None]
+                while len(preview_processes) >= 16:
+                    oldest = preview_processes.pop(0)
+                    if oldest.poll() is None:
+                        oldest.terminate()
+                process = self.media.start_playback(path, self.output_device, volume=self.playback_volume)
+                if process:
+                    preview_processes.append(process)
             except (OSError, wave.Error, MediaError, ValueError) as exc:
                 messagebox.showerror("Keyboard note failed", str(exc), parent=dialog)
             return "break"
@@ -3717,8 +3745,10 @@ class QuickEdit(tk.Tk):
             return None
 
         def close() -> None:
-            if self.preview_process and self.preview_process.poll() is None: self.preview_process.terminate()
-            self.preview_process = None
+            for process in preview_processes:
+                if process.poll() is None:
+                    process.terminate()
+            preview_processes.clear()
             for path in temporary_files:
                 try: os.remove(path)
                 except OSError: pass
@@ -3747,6 +3777,7 @@ class QuickEdit(tk.Tk):
         if not path:
             return
         self.soundfont_path = path
+        self._save_file_history()
         self.announce(f"SoundFont selected: {os.path.basename(path)}.")
         if rerender and self.document and self.document.midi_path:
             self.rerender_midi()
