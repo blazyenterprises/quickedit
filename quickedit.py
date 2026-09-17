@@ -4319,6 +4319,7 @@ class QuickEdit(tk.Tk):
             def activate_loaded_sample() -> None:
                 instrument_mode[0] = "sample"
                 status.set(f"Sample instrument active: {os.path.basename(path)}. Root MIDI note {root}.")
+                note_list.focus_set()
                 self.screen_reader.speak(status.get())
 
             # Listbox selection events are queued by Tk. Activate the sample
@@ -4520,8 +4521,11 @@ class QuickEdit(tk.Tk):
             dialog.destroy()
 
         note_list.bind("<space>", preview); note_list.bind("<Return>", insert)
-        note_list.bind("<KeyPress>", play_key, add="+")
-        note_list.bind("<KeyRelease>", release_key, add="+")
+        # Playable keys must work regardless of which control has focus. In
+        # particular, a file dialog returns focus to the Choose Sample button;
+        # binding only the note list made a successfully loaded sample silent.
+        dialog.bind("<KeyPress>", play_key, add="+")
+        dialog.bind("<KeyRelease>", release_key, add="+")
         dialog.bind("<FocusOut>", release_all_notes, add="+")
         waveform_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Synth waveform list. {selected_waveform()} selected."))
         waveform_list.bind("<<ListboxSelect>>", waveform_changed)
