@@ -291,6 +291,8 @@ class QuickEdit(tk.Tk):
         self.input_device: AudioDevice | None = None
         self.output_device = "auto"
         self.soundfont_path: str | None = None
+        self.keyboard_sample_path: str | None = None
+        self.keyboard_sample_root = 60
         self.export_sample_rate: int | None = None
         self.export_bit_depth: int | None = None
         self.export_channels: int | None = None
@@ -1223,6 +1225,9 @@ class QuickEdit(tk.Tk):
             self.saved_streams = [item for item in raw_streams if isinstance(item, dict) and item.get("url")]
             soundfont_path = str(settings.get("soundfont_path", self.__dict__.get("soundfont_path", "")))
             self.soundfont_path = soundfont_path if os.path.isfile(soundfont_path) else None
+            keyboard_sample_path = str(settings.get("keyboard_sample_path", self.__dict__.get("keyboard_sample_path", "")))
+            self.keyboard_sample_path = keyboard_sample_path if os.path.isfile(keyboard_sample_path) else None
+            self.keyboard_sample_root = max(0, min(127, int(settings.get("keyboard_sample_root", self.__dict__.get("keyboard_sample_root", 60)))))
         except (OSError, ValueError, TypeError):
             pass
 
@@ -1249,6 +1254,8 @@ class QuickEdit(tk.Tk):
             muted_midi_channels=sorted(self.__dict__.get("muted_midi_channels", set())),
             saved_streams=self.__dict__.get("saved_streams", []),
             soundfont_path=self.__dict__.get("soundfont_path") or "",
+            keyboard_sample_path=self.__dict__.get("keyboard_sample_path") or "",
+            keyboard_sample_root=self.__dict__.get("keyboard_sample_root", 60),
         )
         with open(self._history_path, "w", encoding="utf-8") as target:
             json.dump(settings, target, indent=2)
@@ -4235,9 +4242,9 @@ class QuickEdit(tk.Tk):
         dialog.title("Virtual MIDI and Sample Keyboard")
         dialog.geometry("760x640")
         dialog.transient(self)
-        sample_path = [""]
+        sample_path = [self.keyboard_sample_path or ""]
         decoded_sample_path = [""]
-        root_note = [60]
+        root_note = [self.keyboard_sample_root]
         soundfont_path = [self.soundfont_path or ""]
         soundfont_presets: list[Preset] = []
         instrument_mode = ["synth"]
@@ -4295,11 +4302,7 @@ class QuickEdit(tk.Tk):
             selected = preset_list.curselection()
             return selected[0] if selected and selected[0] < len(soundfont_presets) else -1
 
-        def choose_sample() -> None:
-            path = filedialog.askopenfilename(title="Choose a sample for the keyboard", parent=dialog)
-            if not path: return
-            root = self._ask_midi_note("Sample root note", "Sample root note. Enter G, C4, F sharp 3, B flat 2, or a MIDI number:")
-            if root is None: return
+        def load_sample(path: str, root: int, announce: bool = True) -> bool:
             document = self.document
             rate, width, channels = (document.frame_rate, document.sample_width, document.channels) if document else (44100, 2, 1)
             handle, decoded = tempfile.mkstemp(prefix="quickedit-sample-source-", suffix=".wav"); os.close(handle)
@@ -4311,10 +4314,14 @@ class QuickEdit(tk.Tk):
             except (OSError, wave.Error, MediaError, ValueError) as exc:
                 try: os.remove(decoded)
                 except OSError: pass
-                messagebox.showerror("Could not load sample", str(exc), parent=dialog)
-                return
+                if announce:
+                    messagebox.showerror("Could not load sample", str(exc), parent=dialog)
+                return False
             temporary_files.append(decoded)
             sample_path[0], decoded_sample_path[0], root_note[0] = path, decoded, root
+            self.keyboard_sample_path = path
+            self.keyboard_sample_root = root
+            self._save_file_history()
             waveform_list.selection_clear(0, "end")
             preset_list.selection_clear(0, "end")
 
@@ -4327,6 +4334,14 @@ class QuickEdit(tk.Tk):
             # Listbox selection events are queued by Tk. Activate the sample
             # after those events have drained so they cannot steal the mode.
             dialog.after_idle(activate_loaded_sample)
+            return True
+
+        def choose_sample() -> None:
+            path = filedialog.askopenfilename(title="Choose a sample for the keyboard", parent=dialog)
+            if not path: return
+            root = self._ask_midi_note("Sample root note", "Sample root note. Enter G, C4, F sharp 3, B flat 2, or a MIDI number:")
+            if root is None: return
+            load_sample(path, root)
 
         def use_loaded_sample() -> None:
             if not sample_path[0] or not decoded_sample_path[0] or not os.path.isfile(decoded_sample_path[0]):
@@ -4509,7 +4524,7 @@ class QuickEdit(tk.Tk):
                 # mpv needs a moment to open the device. A very quick key tap
                 # previously killed it before the first audio buffer played.
                 elapsed = time.monotonic() - active_key_started.get(key, 0.0)
-                delay_ms = max(0, round((0.20 - elapsed) * 1000))
+                delay_ms = max(0, round((0.60 - elapsed) * 1000))
 
                 def finish_release(expected=process, released_key=key) -> None:
                     pending_key_releases.pop(released_key, None)
@@ -4556,7 +4571,6 @@ class QuickEdit(tk.Tk):
             for child in widget.winfo_children():
                 bind_playable_keys(child)
 
-        bind_playable_keys(dialog)
         dialog.bind("<FocusOut>", release_all_notes, add="+")
         waveform_list.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Synth waveform list. {selected_waveform()} selected."))
         waveform_list.bind("<<ListboxSelect>>", waveform_changed)
@@ -4571,8 +4585,11 @@ class QuickEdit(tk.Tk):
         self.accessible_button(buttons, "Preview Note", preview).pack(side="left", padx=8)
         self.accessible_button(buttons, "Insert Note", insert).pack(side="left")
         self.accessible_button(buttons, "Close Keyboard", close).pack(side="right")
+        bind_playable_keys(dialog)
         dialog.protocol("WM_DELETE_WINDOW", close)
-        if soundfont_path[0]:
+        if sample_path[0] and os.path.isfile(sample_path[0]):
+            load_sample(sample_path[0], root_note[0], announce=False)
+        elif soundfont_path[0]:
             load_soundfont(soundfont_path[0])
         note_list.focus_set()
 
