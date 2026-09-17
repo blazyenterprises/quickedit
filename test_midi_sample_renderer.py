@@ -19,6 +19,16 @@ class MidiSampleRendererTests(unittest.TestCase):
             self.assertEqual((notes[0].note, notes[0].velocity), (64, 91))
             self.assertEqual(notes[0].end_tick - notes[0].start_tick, 960)
 
+    def test_declared_tick_zero_tempo_replaces_midi_default(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "fast-note.mid")
+            midi = one_note_midi(64, Preset("Test", 0, 0), duration_seconds=1.0)
+            midi = midi.replace(b"\xff\x51\x03\x07\xa1\x20", b"\xff\x51\x03\x03\xd0\x90")
+            with open(path, "wb") as target:
+                target.write(midi)
+            _division, tempos, _notes = read_midi_notes(path)
+            self.assertEqual(tempos, [(0, 250_000)])
+
     def test_channel_filter_removes_only_muted_channel_events(self):
         with tempfile.TemporaryDirectory() as folder:
             source = os.path.join(folder, "source.mid")

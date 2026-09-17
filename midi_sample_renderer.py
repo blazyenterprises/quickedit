@@ -36,7 +36,7 @@ def read_midi_notes(path: str) -> tuple[int, list[tuple[int, int]], list[MidiNot
     if division & 0x8000:
         raise ValueError("SMPTE-timed MIDI files are not supported yet.")
     position = 8 + header_size
-    tempos: list[tuple[int, int]] = [(0, 500_000)]
+    tempos: list[tuple[int, int]] = []
     notes: list[MidiNote] = []
     for _ in range(track_count):
         if data[position:position + 4] != b"MTrk":
@@ -82,6 +82,11 @@ def read_midi_notes(path: str) -> tuple[int, list[tuple[int, int]], list[MidiNot
                     notes.append(MidiNote(channel, payload[0], velocity, start, max(start + 1, tick)))
         for (_channel, note), pending in active.items():
             notes.extend(MidiNote(_channel, note, velocity, start, max(start + 1, tick)) for start, velocity in pending)
+    # MIDI defaults to 120 BPM only when no tempo has been declared at the
+    # beginning. Adding the default before parsing caused it to overwrite a
+    # real tick-zero tempo when the tempo map was collapsed.
+    if not any(tick == 0 for tick, _tempo in tempos):
+        tempos.append((0, 500_000))
     return division, sorted(set(tempos)), notes
 
 
