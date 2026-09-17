@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from quickedit import AudioDocument, QuickEdit, format_time, next_prefix_index, parse_time
+from quickedit import AudioDocument, QuickEdit, format_time, matching_path_index, next_prefix_index, parse_time
 
 
 class TimeTests(unittest.TestCase):
@@ -103,6 +103,14 @@ class FileNavigationTests(unittest.TestCase):
 
     def test_missing_prefix_returns_none(self):
         self.assertIsNone(next_prefix_index(["Grateful Dead"], 0, "x"))
+
+    def test_backing_out_restores_the_folder_just_exited(self):
+        entries = [(r"C:\Music\Alpha", True), (r"C:\Music\Grateful Dead", True), (r"C:\Music\song.wav", False)]
+        self.assertEqual(matching_path_index(entries, r"C:\Music\Grateful Dead"), 1)
+
+    def test_missing_previous_folder_falls_back_to_first_item(self):
+        entries = [(r"C:\Music\Alpha", True), (r"C:\Music\song.wav", False)]
+        self.assertEqual(matching_path_index(entries, r"C:\Music\Missing"), 0)
 
 
 class PlaybackSettingTests(unittest.TestCase):

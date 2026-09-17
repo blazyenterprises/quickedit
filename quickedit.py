@@ -127,6 +127,18 @@ def next_prefix_index(names: list[str], current: int, prefix: str) -> int | None
     return None
 
 
+def matching_path_index(entries: list[tuple[str, bool]], selected_path: str | None) -> int:
+    """Return the item matching a path, falling back to the first item."""
+    if not selected_path:
+        return 0
+    wanted = os.path.normcase(os.path.abspath(selected_path))
+    return next(
+        (index for index, (path, _) in enumerate(entries)
+         if os.path.normcase(os.path.abspath(path)) == wanted),
+        0,
+    )
+
+
 @dataclass
 class AudioDocument:
     channels: int
@@ -946,6 +958,58 @@ class QuickEdit(tk.Tk):
             entry.bind("<KeyPress-BackSpace>", announce_deletion, add="+")
             entry.bind("<KeyPress-Delete>", announce_deletion, add="+")
 
+    def bind_accessible_combobox(self, box: ttk.Combobox, label: str, variable: tk.StringVar) -> None:
+        """Announce a combo box reliably on focus and selection changes."""
+        def announce(event=None) -> None:
+            self.after(80, lambda: self.screen_reader.speak(
+                f"{label}, combo box, current value {variable.get().strip() or 'blank'}."
+            ) if self.focus_get() is box else None)
+        box.bind("<FocusIn>", announce, add="+")
+        box.bind("<<ComboboxSelected>>", announce, add="+")
+
+    def bind_accessible_text(self, widget: tk.Text, label: str) -> None:
+        """Add dependable NVDA feedback to a multiline Tk edit control."""
+        widget.bind("<FocusIn>", lambda event: self.after(
+            80, lambda: self.screen_reader.speak(f"{label}, multiline edit.")
+            if self.focus_get() is widget else None
+        ), add="+")
+
+        def announce_navigation(event) -> None:
+            try:
+                key = event.keysym.lower()
+                if key in {"up", "down"}:
+                    offset = -1 if key == "up" else 1
+                    line = int(widget.index("insert").split(".")[0]) + offset
+                    last = int(widget.index("end-1c").split(".")[0])
+                    line = max(1, min(last, line))
+                    value = widget.get(f"{line}.0", f"{line}.end")
+                    self.screen_reader.speak(value or "blank line")
+                else:
+                    position = widget.index("insert")
+                    target = f"{position}-1c" if key == "left" else position
+                    character = widget.get(target, f"{target}+1c")
+                    if character:
+                        self.screen_reader.speak({" ": "space", "\t": "tab", "\n": "new line"}.get(character, character))
+                    else:
+                        self.screen_reader.speak("beginning" if key == "left" else "end")
+            except tk.TclError:
+                pass
+
+        def announce_deletion(event) -> None:
+            try:
+                position = widget.index("insert")
+                target = f"{position}-1c" if event.keysym.lower() == "backspace" else position
+                character = widget.get(target, f"{target}+1c")
+                spoken = {" ": "space", "\t": "tab", "\n": "new line"}.get(character, character)
+                self.screen_reader.speak(f"deleted {spoken}" if spoken else "nothing to delete")
+            except tk.TclError:
+                pass
+
+        for sequence in ("<KeyPress-Left>", "<KeyPress-Right>", "<KeyPress-Up>", "<KeyPress-Down>"):
+            widget.bind(sequence, announce_navigation, add="+")
+        widget.bind("<KeyPress-BackSpace>", announce_deletion, add="+")
+        widget.bind("<KeyPress-Delete>", announce_deletion, add="+")
+
     @staticmethod
     def _entry_navigation_text(value: str, position: int, key: str) -> str:
         if key == "home" or position <= 0 and key == "left":
@@ -1395,8 +1459,11 @@ class QuickEdit(tk.Tk):
         path_var = tk.StringVar(value=current_dir[0])
         selection_var = tk.StringVar(value="")
 
-        tk.Label(dialog, text="Folder:").pack(anchor="w", padx=12, pady=(10, 0))
-        tk.Label(dialog, textvariable=path_var, anchor="w", relief="sunken", padx=6).pack(fill="x", padx=12)
+        tk.Label(dialog, text="Folder location").pack(anchor="w", padx=12, pady=(10, 0))
+        location_row = tk.Frame(dialog); location_row.pack(fill="x", padx=12)
+        location_entry = tk.Entry(location_row, textvariable=path_var, takefocus=True)
+        location_entry.pack(side="left", fill="x", expand=True)
+        self.bind_accessible_entry(location_entry, "Folder location", path_var)
         file_list = tk.Listbox(dialog, exportselection=False, width=90, height=18)
         file_list.pack(fill="both", expand=True, padx=12, pady=8)
         preview_check = ttk.Checkbutton(
@@ -1415,7 +1482,7 @@ class QuickEdit(tk.Tk):
                 self.preview_process.terminate()
             self.preview_process = None
 
-        def populate(folder: str) -> None:
+        def populate(folder: str, select_path: str | None = None) -> None:
             stop_preview()
             try:
                 items = list(os.scandir(folder))
@@ -1432,10 +1499,21 @@ class QuickEdit(tk.Tk):
                 entries.append((item.path, item.is_dir()))
                 file_list.insert("end", f"Folder: {item.name}" if item.is_dir() else item.name)
             if entries:
-                file_list.selection_set(0)
-                file_list.activate(0)
-                file_list.see(0)
+                selected_index = matching_path_index(entries, select_path)
+                file_list.selection_set(selected_index)
+                file_list.activate(selected_index)
+                file_list.see(selected_index)
                 dialog.after(100, selection_changed)
+
+        def open_location(event=None) -> str:
+            requested = os.path.abspath(os.path.expandvars(os.path.expanduser(path_var.get().strip())))
+            if os.path.isdir(requested):
+                populate(requested)
+                file_list.focus_set()
+            else:
+                self.screen_reader.speak("That folder does not exist.")
+                location_entry.focus_set()
+            return "break"
 
         def selection_changed(event=None) -> None:
             selected = file_list.curselection()
@@ -1495,9 +1573,10 @@ class QuickEdit(tk.Tk):
                 dialog.destroy()
 
         def go_up(event=None) -> str:
-            parent = os.path.dirname(current_dir[0])
-            if parent and parent != current_dir[0]:
-                populate(parent)
+            child = current_dir[0]
+            parent = os.path.dirname(child)
+            if parent and parent != child:
+                populate(parent, child)
             return "break"
 
         def toggle_preview() -> None:
@@ -1519,6 +1598,7 @@ class QuickEdit(tk.Tk):
             self.screen_reader.speak(f"Previewing {os.path.basename(path)}.")
 
         preview_check.configure(command=toggle_preview)
+        location_entry.bind("<Return>", open_location)
         preview_check.bind(
             "<FocusIn>",
             lambda event: self.screen_reader.speak(
@@ -1532,6 +1612,7 @@ class QuickEdit(tk.Tk):
         file_list.bind("<Home>", list_home)
         file_list.bind("<End>", list_end)
         file_list.bind("<KeyPress>", first_letter, add="+")
+        self.accessible_button(location_row, "Go to Folder", open_location).pack(side="left", padx=(8, 0))
         self.accessible_button(buttons, "Open Selected File", activate).pack(side="left")
         self.accessible_button(buttons, "Preview Selected File", preview_selected).pack(side="left", padx=8)
         self.accessible_button(buttons, "Stop Preview", stop_preview).pack(side="left")
@@ -3308,16 +3389,16 @@ class QuickEdit(tk.Tk):
             return "break"
 
         engine_box.bind("<<ComboboxSelected>>", refresh_voices)
-        engine_box.bind("<FocusIn>", lambda event: self.screen_reader.speak("Speech engine, combo box."))
-        voice_box.bind("<FocusIn>", lambda event: self.screen_reader.speak("Voice name or voice ID, editable combo box."))
-        text_box.bind("<FocusIn>", lambda event: self.screen_reader.speak("Text to synthesize, multiline edit."))
+        self.bind_accessible_combobox(engine_box, "Speech engine", engine_var)
+        self.bind_accessible_combobox(voice_box, "Voice name or voice ID", voice_var)
+        self.bind_accessible_text(text_box, "Text to synthesize")
         self.accessible_button(buttons, "Refresh Voices", refresh_voices).pack(side="left")
         self.accessible_button(buttons, "Configure Engine", configure).pack(side="left", padx=6)
         self.accessible_button(buttons, "Preview Speech", preview).pack(side="left")
         self.accessible_button(buttons, "Insert Speech at Cursor", insert).pack(side="left", padx=6)
         self.accessible_button(buttons, "Save Speech Audio", save_audio).pack(side="left")
         self.accessible_button(buttons, "Close", dialog.destroy).pack(side="right")
-        dialog.bind("<Escape>", lambda event: dialog.destroy()); refresh_voices(); text_box.focus_set()
+        dialog.bind("<Escape>", lambda event: dialog.destroy()); refresh_voices(); engine_box.focus_set()
 
     def censor_selection(self) -> None:
         document = self.require_document()
