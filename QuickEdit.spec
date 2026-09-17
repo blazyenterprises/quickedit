@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_all
+
+pedalboard_datas, pedalboard_binaries, pedalboard_hiddenimports = collect_all('pedalboard')
+
 
 a = Analysis(
     ['quickedit.py'],
-    pathex=[],
-    binaries=[('ffmpeg.exe', '.'), ('ffprobe.exe', '.'), ('mpv.exe', '.'), ('nvdaControllerClient64.dll', '.')],
-    datas=[('runtime', 'runtime')],
-    hiddenimports=[],
+    pathex=['.builddeps'],
+    binaries=[('ffmpeg.exe', '.'), ('ffprobe.exe', '.'), ('mpv.exe', '.'), ('nvdaControllerClient64.dll', '.'), *pedalboard_binaries],
+    datas=[('runtime', 'runtime'), *pedalboard_datas],
+    hiddenimports=pedalboard_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=['pyi_rth_tk314.py'],

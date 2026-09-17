@@ -24,6 +24,8 @@ import audio_effects
 import signal_generator
 from soundfont_tools import Preset, list_presets, one_note_midi
 from midi_sample_renderer import filter_midi_channels, render_midi_with_sample
+import cd_burner
+import vst_backend
 
 # PyInstaller's Tk hook still points Python 3.14 at pre-3.14 library folders.
 # Tcl/Tk 9 carries its standard library in zipfs, so let it use that default.
@@ -421,7 +423,10 @@ class QuickEdit(tk.Tk):
         plugins = tk.Menu(menu, tearoff=False)
         plugins.add_command(label="Open Isolated VST2 and VST3 Rack", command=self.open_carla_host)
         plugins.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
+        plugins.add_command(label="Preview VST3 on Selection", command=lambda: self.apply_vst_plugin(preview=True))
+        plugins.add_command(label="Apply VST3 to Selection", command=self.apply_vst_plugin)
         menu.add_cascade(label="VST Plug-ins", menu=plugins)
+        file_menu.add_command(label="Burn Audio CD", command=self.burn_audio_cd)
 
         online = tk.Menu(menu, tearoff=False)
         online.add_command(label="Import Direct Link", command=self.import_online_link)
@@ -573,6 +578,9 @@ class QuickEdit(tk.Tk):
         instruments.add_separator()
         instruments.add_command(label="Open VST2 and VST3 Rack", command=self.open_carla_host)
         instruments.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
+        instruments.add_command(label="Preview VST3 on Selection", command=lambda: self.apply_vst_plugin(preview=True))
+        instruments.add_command(label="Apply VST3 to Selection", command=self.apply_vst_plugin)
+        instruments.add_command(label="Burn Audio CD", command=self.burn_audio_cd)
         menu.add_cascade(label="Instruments and Plug-ins", menu=instruments)
         create = tk.Menu(menu, tearoff=False)
         create.add_command(label="Tone or Noise", command=self.generate_tone)
@@ -3655,6 +3663,91 @@ class QuickEdit(tk.Tk):
         self.open_carla_host()
         self.announce(f"VST host opened. In Carla, add {os.path.basename(path)} from {os.path.dirname(path)}.")
 
+    def apply_vst_plugin(self, preview: bool = False) -> None:
+        document = self.require_document()
+        if not document:
+            return
+        plugin_path = filedialog.askopenfilename(title="Choose VST3 plug-in", filetypes=[("VST3 plug-ins", "*.vst3"), ("All files", "*.*")], parent=self)
+        if not plugin_path:
+            return
+        selection = document.selection()
+        start, end = selection if selection else (0, document.frame_count)
+        if preview:
+            end = min(end, start + round(document.frame_rate * 10))
+        source_handle, source_path = tempfile.mkstemp(prefix="quickedit-vst-source-", suffix=".wav")
+        result_handle, result_path = tempfile.mkstemp(prefix="quickedit-vst-result-", suffix=".wav")
+        os.close(source_handle); os.close(result_handle)
+        try:
+            with wave.open(source_path, "wb") as target:
+                target.setnchannels(document.channels); target.setsampwidth(document.sample_width); target.setframerate(document.frame_rate)
+                target.writeframes(document.slice_bytes(start, end))
+            vst_backend.render_plugin(plugin_path, source_path, result_path)
+            with wave.open(result_path, "rb") as rendered:
+                frames = rendered.readframes(rendered.getnframes())
+            name = vst_backend.plugin_name(plugin_path)
+            if preview:
+                self.stop_effect_preview(); self.effect_preview_files.update((source_path, result_path))
+                self.preview_process = self.media.start_playback(result_path, self.output_device, volume=self.playback_volume)
+                self.announce(f"Previewing {name}, up to 10 seconds.")
+                return
+            self.stop(announce=False); self._checkpoint()
+            document.frames = document.slice_bytes(0, start) + frames + document.slice_bytes(end, document.frame_count)
+            document.cursor_frame = start; document.selection_start = document.selection_end = None
+            self.refresh_details(); self.announce(f"Applied VST plug-in {name}.")
+        except Exception as exc:
+            messagebox.showerror("VST processing failed", str(exc), parent=self)
+        finally:
+            if not preview:
+                for path in (source_path, result_path):
+                    try: os.remove(path)
+                    except OSError: pass
+
+    def burn_audio_cd(self) -> None:
+        paths = list(filedialog.askopenfilenames(title="Choose audio tracks in CD order", filetypes=[("Audio files", "*.wav *.flac *.mp3 *.ogg *.opus *.m4a *.wma *.aiff *.aif"), ("All files", "*.*")], parent=self))
+        if not paths:
+            return
+        try:
+            recorders = cd_burner.list_recorders()
+        except (OSError, RuntimeError, ValueError) as exc:
+            messagebox.showerror("CD recorder unavailable", str(exc), parent=self); return
+        if not recorders:
+            messagebox.showerror("CD recorder unavailable", "Windows did not find an optical disc recorder.", parent=self); return
+        recorder = recorders[0]
+        if len(recorders) > 1:
+            names = "\n".join(f"{index + 1}. {item['name']}" for index, item in enumerate(recorders))
+            choice = simpledialog.askinteger("Choose CD recorder", f"{names}\n\nRecorder number:", parent=self, minvalue=1, maxvalue=len(recorders), initialvalue=1)
+            if choice is None: return
+            recorder = recorders[choice - 1]
+        total_seconds = sum(self.media.probe_duration(path) for path in paths)
+        if total_seconds > 79 * 60:
+            messagebox.showerror("Audio CD is too long", f"These tracks total {format_time(total_seconds)}. Keep a standard audio CD below 79 minutes.", parent=self); return
+        if not messagebox.askyesno("Burn Audio CD", f"Burn {len(paths)} tracks to {recorder['name']} and finalize the disc? This cannot be undone.", parent=self):
+            return
+        folder = tempfile.mkdtemp(prefix="quickedit-cd-")
+        raw_tracks = []
+        try:
+            for index, source in enumerate(paths, 1):
+                target = os.path.join(folder, f"track-{index:02d}.raw")
+                self.media._run([self.media.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", source, "-af", "apad=whole_dur=4", "-ar", "44100", "-ac", "2", "-f", "s16le", target])
+                size = os.path.getsize(target); padding = (-size) % 2352
+                if padding:
+                    with open(target, "ab") as track: track.write(bytes(padding))
+                raw_tracks.append(target)
+            process = subprocess.Popen(cd_burner.burn_command(recorder["id"], raw_tracks), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except (OSError, MediaError) as exc:
+            messagebox.showerror("Could not prepare audio CD", str(exc), parent=self); return
+        self.announce(f"Burning {len(paths)} tracks to {recorder['name']}. Do not remove the disc.")
+        def check_burn() -> None:
+            if process.poll() is None:
+                self.after(1000, check_burn); return
+            _out, error = process.communicate()
+            import shutil; shutil.rmtree(folder, ignore_errors=True)
+            if process.returncode:
+                messagebox.showerror("Audio CD burn failed", error.strip() or "Windows reported an unknown disc-writing error.", parent=self)
+            else:
+                self.announce("Audio CD burn completed and the disc was finalized.")
+        self.after(1000, check_burn)
+
     def virtual_midi_keyboard(self) -> None:
         dialog = tk.Toplevel(self)
         dialog.title("Virtual MIDI and Sample Keyboard")
@@ -4274,6 +4367,8 @@ if __name__ == "__main__":
         )
         if not all(path and os.path.isfile(path) for path in required_tools):
             raise RuntimeError("The portable package is missing one or more bundled audio tools.")
+        if not vst_backend._pedalboard().__version__:
+            raise RuntimeError("The portable package is missing the offline VST engine.")
         app.update_idletasks()
         app.destroy()
         # A few bundled native runtimes keep Windows loader threads alive after

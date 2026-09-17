@@ -147,11 +147,15 @@ a beep, buzz, silence, reversed audio, or remove it. Censoring is deliberately
 selection based; QuickEdit does not send speech to an online transcription
 service or guess which words the editor intended to censor.
 
-The **VST Plug-ins** menu opens the bundled Carla rack in its own process so a
-faulty VST2 or VST3 plug-in is isolated from the editor. The locator command can
-choose a DLL or VST3 file and reports its folder for adding inside Carla. This
-is a live plug-in rack; applying a plug-in destructively to a QuickEdit
-selection is not implemented yet.
+The **VST Plug-ins** menu opens the bundled Carla rack in its own process for
+live VST2 and VST3 plug-in use. QuickEdit can also preview a VST3 plug-in on up
+to ten seconds of the bracketed selection, then apply it destructively to the
+selection or whole file through the bundled offline VST3 engine.
+
+**File > Burn Audio CD** accepts up to 99 audio files in track order, converts
+them to standard 44.1 kHz, 16-bit stereo CD audio, checks the disc duration,
+and burns and finalizes a CD-R or CD-RW through Windows IMAPI. Multiple optical
+recorders can be selected without relying on an inaccessible third-party burner.
 
 ## Online audio
 

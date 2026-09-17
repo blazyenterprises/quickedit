@@ -7,6 +7,7 @@ import subprocess
 import glob
 import time
 import uuid
+import wave
 from dataclasses import dataclass
 
 
@@ -119,6 +120,18 @@ class MediaBackend:
         except (ValueError, TypeError):
             return {}
         return {str(key).lower(): str(value) for key, value in tags.items() if value is not None}
+
+    def probe_duration(self, source: str) -> float:
+        if not self.ffprobe:
+            if source.lower().endswith(".wav"):
+                with wave.open(source, "rb") as audio:
+                    return audio.getnframes() / audio.getframerate()
+            raise MediaError("FFprobe was not found, so track duration is unavailable.")
+        result = self._run([self.ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", source])
+        try:
+            return float(result.stdout.strip())
+        except ValueError as exc:
+            raise MediaError(f"Could not determine the duration of {os.path.basename(source)}.") from exc
 
     def encode(self, wav_source: str, target: str, sample_rate: int | None = None, channels: int | None = None, bit_depth: int = 16, bitrate_kbps: int = 192, metadata: dict[str, str] | None = None) -> None:
         if not self.ffmpeg:
