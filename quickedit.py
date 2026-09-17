@@ -218,7 +218,7 @@ class QuickEdit(tk.Tk):
     }
     NAVIGATION_STEPS = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
 
-    def __init__(self) -> None:
+    def __init__(self, initial_path: str | None = None) -> None:
         super().__init__()
         self.title("QuickEdit")
         self.geometry("760x430")
@@ -297,6 +297,8 @@ class QuickEdit(tk.Tk):
         self.theme_manager.apply()
         self.bind_all("<Map>", self._theme_new_widget, add="+")
         self.after(1500, self._poll_system_theme)
+        if initial_path:
+            self.after(0, lambda: self._open_path(os.path.abspath(initial_path)))
 
     def _build_menu(self) -> None:
         if self.workspace_mode == "library":
@@ -4701,5 +4703,6 @@ if __name__ == "__main__":
             raise RuntimeError("The portable package is missing online speech support.")
         os._exit(0)
     else:
-        app = QuickEdit()
+        startup_file = next((argument for argument in sys.argv[1:] if not argument.startswith("--")), None)
+        app = QuickEdit(startup_file)
         app.mainloop()

@@ -5,6 +5,8 @@ portable-build*/
 portable-dist*/
 build/
 dist/
+release/
+installer-test/
 
 # Bundled release runtimes are too large for ordinary GitHub source history.
 # Attach packaged builds to GitHub Releases instead.

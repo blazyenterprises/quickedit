@@ -3,7 +3,7 @@
 QuickEdit is a keyboard-first, screen-reader-friendly audio editor and audio
 workbench for Windows.
 
-This prototype can open PCM WAV directly and uses ApricotPlayer's bundled
+QuickEdit can open PCM WAV directly and uses bundled
 FFmpeg for common compressed audio and media formats. It can move the cursor by
 time, mark a selection, play the selection or whole file, delete or crop, undo
 and redo, record, and export to several audio formats.
@@ -26,6 +26,12 @@ For friends who do not have Python, use the portable Windows package. Unzip the
 entire folder and run `QuickEdit.exe`; its Python runtime, FFmpeg/FFprobe, mpv, yt-dlp,
 FluidSynth, Carla plug-in host, and NVDA controller support are included. The `_internal` folder
 must remain beside `QuickEdit.exe`.
+
+The recommended Windows installer adds QuickEdit to the Start Menu, provides a
+normal uninstaller, and registers it as an available audio player and editor.
+Windows protects the final default-app choice, so select QuickEdit in Windows'
+Default Apps screen when the installer opens it. The portable package remains
+available for people who do not want to install anything.
 
 The **File > Recent Files** menu remembers the 20 most recently opened local
 files. **File > Favorites** can add or remove the current local file and keeps
