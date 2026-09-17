@@ -933,6 +933,16 @@ class QuickEdit(tk.Tk):
                 self.screen_reader.speak(value or "blank")
             entry.bind("<KeyPress-Up>", announce_line, add="+")
             entry.bind("<KeyPress-Down>", announce_line, add="+")
+            def announce_deletion(event) -> None:
+                try:
+                    value = str(variable.get())
+                    position = int(entry.index(tk.INSERT))
+                    spoken = self._entry_deletion_text(value, position, event.keysym.lower())
+                    if spoken: self.screen_reader.speak(spoken)
+                except tk.TclError:
+                    pass
+            entry.bind("<KeyPress-BackSpace>", announce_deletion, add="+")
+            entry.bind("<KeyPress-Delete>", announce_deletion, add="+")
 
     @staticmethod
     def _entry_navigation_text(value: str, position: int, key: str) -> str:
@@ -948,6 +958,15 @@ class QuickEdit(tk.Tk):
             return "beginning" if position <= 0 else "end"
         character = value[index]
         return {" ": "space", "\t": "tab", "\n": "new line"}.get(character, character)
+
+    @staticmethod
+    def _entry_deletion_text(value: str, position: int, key: str) -> str:
+        index = position - 1 if key == "backspace" else position
+        if not 0 <= index < len(value):
+            return "nothing to delete"
+        character = value[index]
+        spoken = {" ": "space", "\t": "tab", "\n": "new line"}.get(character, character)
+        return f"deleted {spoken}"
 
     @property
     def navigation_step(self) -> float:

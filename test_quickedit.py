@@ -54,6 +54,12 @@ class AccessibleEntryTests(unittest.TestCase):
         self.assertEqual(QuickEdit._entry_navigation_text("440", 0, "left"), "beginning")
         self.assertEqual(QuickEdit._entry_navigation_text("440", 3, "right"), "end")
 
+    def test_backspace_and_delete_announce_removed_character(self):
+        self.assertEqual(QuickEdit._entry_deletion_text("123", 3, "backspace"), "deleted 3")
+        self.assertEqual(QuickEdit._entry_deletion_text("123", 0, "delete"), "deleted 1")
+        self.assertEqual(QuickEdit._entry_deletion_text("1 3", 1, "delete"), "deleted space")
+        self.assertEqual(QuickEdit._entry_deletion_text("123", 0, "backspace"), "nothing to delete")
+
 
 class DocumentTests(unittest.TestCase):
     def setUp(self):
