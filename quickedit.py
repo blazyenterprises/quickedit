@@ -903,6 +903,20 @@ class QuickEdit(tk.Tk):
         button.bind("<FocusIn>", lambda event, label=text: self.screen_reader.speak(f"{label}, button."))
         return button
 
+    def bind_accessible_entry(self, entry: tk.Entry, label: str, variable: tk.Variable, protected: bool = False) -> None:
+        """Give Tk edit fields a reliable spoken name and current value."""
+        def announce(event=None) -> None:
+            def speak_after_focus_settles() -> None:
+                try:
+                    if self.focus_get() is not entry: return
+                    value = str(variable.get())
+                    current = "protected value" if protected and value else value or "blank"
+                    self.screen_reader.speak(f"{label}, edit, current value {current}.")
+                except tk.TclError:
+                    pass
+            self.after(120, speak_after_focus_settles)
+        entry.bind("<FocusIn>", announce)
+
     @property
     def navigation_step(self) -> float:
         return self.NAVIGATION_STEPS[self.navigation_step_index]
@@ -1723,7 +1737,7 @@ class QuickEdit(tk.Tk):
             dialog.destroy()
             return "break"
 
-        query_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("YouTube search terms, edit."))
+        self.bind_accessible_entry(query_entry, "YouTube search terms", query_var)
         query_entry.bind("<Return>", submit)
         type_list.bind("<FocusIn>", announce_type)
         type_list.bind("<<ListboxSelect>>", announce_type)
@@ -1745,11 +1759,11 @@ class QuickEdit(tk.Tk):
         remember_var = tk.BooleanVar(value=self.audiovault_credentials is not None)
         tk.Label(dialog, text="AudioVault email").grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
         email_entry = tk.Entry(dialog, textvariable=email_var, width=48)
-        email_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("AudioVault email, edit."))
+        self.bind_accessible_entry(email_entry, "AudioVault email", email_var)
         email_entry.grid(row=1, column=0, sticky="ew", padx=12)
         tk.Label(dialog, text="Password").grid(row=2, column=0, sticky="w", padx=12, pady=(10, 4))
         password_entry = tk.Entry(dialog, textvariable=password_var, show="*", width=48)
-        password_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("AudioVault password, protected edit."))
+        self.bind_accessible_entry(password_entry, "AudioVault password", password_var, protected=True)
         password_entry.grid(row=3, column=0, sticky="ew", padx=12)
         remember_check = ttk.Checkbutton(
             dialog, text="Remember me on this computer", variable=remember_var, takefocus=True
@@ -2231,7 +2245,7 @@ class QuickEdit(tk.Tk):
             variable = tk.StringVar(value=document.metadata.get(key, ""))
             entry = tk.Entry(dialog, textvariable=variable, width=60, takefocus=True)
             entry.grid(row=row * 2 - 1, column=0, sticky="ew", padx=12)
-            entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+            self.bind_accessible_entry(entry, label, variable)
             variables[key] = variable; entries.append(entry)
         buttons = tk.Frame(dialog); buttons.grid(row=len(all_tags) * 2 + 2, column=0, sticky="ew", padx=12, pady=12)
         def save_tags(event=None) -> str:
@@ -2325,7 +2339,7 @@ class QuickEdit(tk.Tk):
                 control.bind("<FocusIn>", lambda event: self.screen_reader.speak("Output format, combo box."))
             else:
                 control = tk.Entry(dialog, textvariable=values[key], takefocus=True)
-                control.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+                self.bind_accessible_entry(control, label, values[key])
             control.grid(row=row * 2 + 1, column=0, sticky="ew", padx=12); entries.append(control)
         buttons = tk.Frame(dialog); buttons.grid(row=10, column=0, sticky="ew", padx=12, pady=12)
         def accept(event=None) -> str:
@@ -2700,7 +2714,7 @@ class QuickEdit(tk.Tk):
             if name: result.append(name); dialog.destroy()
             else: self.screen_reader.speak(f"{label} cannot be blank.")
             return "break"
-        entry.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{label}, edit.")); entry.bind("<Return>", accept)
+        self.bind_accessible_entry(entry, label, value, protected=password); entry.bind("<Return>", accept)
         self.accessible_button(buttons, "OK", accept).pack(side="left")
         self.accessible_button(buttons, "Cancel", dialog.destroy).pack(side="right")
         entry.focus_set(); self.wait_window(dialog)
@@ -2881,7 +2895,7 @@ class QuickEdit(tk.Tk):
             variable = tk.StringVar(value=f"{default:g}")
             entry = tk.Entry(dialog, textvariable=variable, width=28, takefocus=True)
             entry.grid(row=row * 2, column=0, sticky="ew", padx=12)
-            entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+            self.bind_accessible_entry(entry, label, variable)
             values[key] = variable
             entries[key] = entry
         buttons = tk.Frame(dialog)
@@ -3028,7 +3042,7 @@ class QuickEdit(tk.Tk):
             tk.Label(dialog, text=label).grid(row=offset * 2 - 2, column=0, sticky="w", padx=12, pady=(6, 2))
             variable = tk.StringVar(value=default); entry = tk.Entry(dialog, textvariable=variable, takefocus=True)
             entry.grid(row=offset * 2 - 1, column=0, sticky="ew", padx=12)
-            entry.bind("<FocusIn>", lambda event, spoken=label: self.screen_reader.speak(f"{spoken}, edit."))
+            self.bind_accessible_entry(entry, label, variable)
             variables.append(variable); entries.append(entry)
         buttons = tk.Frame(dialog); buttons.grid(row=8, column=0, sticky="ew", padx=12, pady=12)
         def settings() -> tuple[str, float, float, float] | None:
@@ -3111,8 +3125,8 @@ class QuickEdit(tk.Tk):
                 self.stop_effect_preview(); result.append(chosen); dialog.destroy()
             return "break"
         def cancel(event=None) -> str: self.stop_effect_preview(); dialog.destroy(); return "break"
-        digits_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"{kind} key sequence, edit."))
-        speed_entry.bind("<FocusIn>", lambda event: self.screen_reader.speak("Symbols per second, edit."))
+        self.bind_accessible_entry(digits_entry, f"{kind} key sequence", digits_var)
+        self.bind_accessible_entry(speed_entry, "Symbols per second", speed_var)
         digits_entry.bind("<Return>", accept); speed_entry.bind("<Return>", accept)
         self.accessible_button(buttons, f"Preview {kind} Tones", preview).pack(side="left")
         self.accessible_button(buttons, f"Generate {kind} Tones", accept).pack(side="left", padx=8)
@@ -3145,7 +3159,7 @@ class QuickEdit(tk.Tk):
             column = tk.Frame(parameter_row); column.pack(side="left", fill="x", expand=True, padx=3)
             tk.Label(column, text=label).pack(anchor="w")
             entry = tk.Entry(column, textvariable=variable, takefocus=True)
-            entry.pack(fill="x"); entry.bind("<FocusIn>", lambda event, name=label: self.screen_reader.speak(f"{name}, edit."))
+            entry.pack(fill="x"); self.bind_accessible_entry(entry, label, variable)
             parameter_entries.append(entry)
         tk.Label(dialog, text="Text to synthesize").pack(anchor="w", padx=12, pady=(4, 2))
         text_box = tk.Text(dialog, height=20, wrap="word", takefocus=True); text_box.pack(fill="both", expand=True, padx=12)
