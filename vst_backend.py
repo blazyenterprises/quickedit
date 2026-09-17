@@ -20,9 +20,27 @@ def plugin_name(path: str) -> str:
     return str(plugin.name or os.path.basename(path))
 
 
-def render_plugin(plugin_path: str, source_wav: str, target_wav: str) -> None:
+def plugin_parameters(path: str) -> tuple[str, list[dict[str, object]]]:
+    plugin = _pedalboard().load_plugin(path)
+    parameters = []
+    for key, parameter in plugin.parameters.items():
+        display_name = str(getattr(parameter, "name", "") or key.replace("_", " ").title())
+        label = str(parameter.label or parameter.units or "normalized")
+        parameters.append({"key": key, "name": display_name, "raw": float(parameter.raw_value), "label": label})
+    return str(plugin.name or os.path.basename(path)), parameters
+
+
+def render_plugin(
+    plugin_path: str,
+    source_wav: str,
+    target_wav: str,
+    parameter_values: dict[str, float] | None = None,
+) -> None:
     board = _pedalboard()
     plugin = board.load_plugin(plugin_path)
+    for key, value in (parameter_values or {}).items():
+        if key in plugin.parameters:
+            plugin.parameters[key].raw_value = max(0.0, min(1.0, float(value)))
     with board.io.AudioFile(source_wav) as source:
         sample_rate = source.samplerate
         audio = source.read(source.frames)

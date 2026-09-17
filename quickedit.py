@@ -466,10 +466,10 @@ class QuickEdit(tk.Tk):
         menu.add_cascade(label="MIDI and SoundFonts", menu=midi_menu)
 
         plugins = tk.Menu(menu, tearoff=False)
-        plugins.add_command(label="Open Isolated VST2 and VST3 Rack", command=self.open_carla_host)
+        plugins.add_command(label="Open Accessible VST3 Editor", command=self.open_accessible_vst_editor)
+        plugins.add_command(label="Open Legacy Carla Graphical Rack", command=self.open_carla_host)
         plugins.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
-        plugins.add_command(label="Preview VST3 on Selection", command=lambda: self.apply_vst_plugin(preview=True))
-        plugins.add_command(label="Apply VST3 to Selection", command=self.apply_vst_plugin)
+        plugins.add_command(label="Configure, Preview, or Apply VST3", command=self.open_accessible_vst_editor)
         menu.add_cascade(label="VST Plug-ins", menu=plugins)
         file_menu.add_command(label="Burn Audio CD", command=self.burn_audio_cd)
 
@@ -624,10 +624,10 @@ class QuickEdit(tk.Tk):
         instruments.add_command(label="Render MIDI with One Sample", command=self.render_midi_with_one_sample)
         instruments.add_command(label="Mute or Unmute MIDI Channels", command=self.configure_midi_channels)
         instruments.add_separator()
-        instruments.add_command(label="Open VST2 and VST3 Rack", command=self.open_carla_host)
+        instruments.add_command(label="Open Accessible VST3 Editor", command=self.open_accessible_vst_editor)
+        instruments.add_command(label="Open Legacy Carla Graphical Rack", command=self.open_carla_host)
         instruments.add_command(label="Choose VST Plug-in to Locate", command=self.locate_vst_plugin)
-        instruments.add_command(label="Preview VST3 on Selection", command=lambda: self.apply_vst_plugin(preview=True))
-        instruments.add_command(label="Apply VST3 to Selection", command=self.apply_vst_plugin)
+        instruments.add_command(label="Configure, Preview, or Apply VST3", command=self.open_accessible_vst_editor)
         instruments.add_command(label="Burn Audio CD", command=self.burn_audio_cd)
         menu.add_cascade(label="Instruments and Plug-ins", menu=instruments)
         create = tk.Menu(menu, tearoff=False)
@@ -4222,6 +4222,107 @@ class QuickEdit(tk.Tk):
         except OSError as exc:
             messagebox.showerror("Could not open VST host", str(exc), parent=self)
 
+    def open_accessible_vst_editor(self) -> None:
+        plugin_path = filedialog.askopenfilename(
+            title="Choose a VST3 plug-in",
+            filetypes=[("VST3 plug-ins", "*.vst3"), ("All files", "*.*")],
+            parent=self,
+        )
+        if not plugin_path:
+            return
+        try:
+            plugin_name, parameters = vst_backend.plugin_parameters(plugin_path)
+        except Exception as exc:
+            messagebox.showerror("Could not load VST3 plug-in", str(exc), parent=self)
+            return
+        values = {str(item["key"]): float(item["raw"]) for item in parameters}
+        defaults = dict(values)
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Accessible VST3 Editor - {plugin_name}")
+        dialog.geometry("760x520")
+        dialog.transient(self)
+        tk.Label(dialog, text=f"{plugin_name} parameter list. Values are normalized control positions from 0 through 100 percent.").pack(anchor="w", padx=12, pady=(12, 4))
+        parameter_list = tk.Listbox(dialog, exportselection=False, height=18, width=90, takefocus=True)
+        parameter_list.pack(fill="both", expand=True, padx=12)
+        status = tk.StringVar(value="")
+        tk.Label(dialog, textvariable=status, anchor="w", wraplength=720).pack(fill="x", padx=12, pady=6)
+
+        def parameter_text(index: int) -> str:
+            item = parameters[index]
+            percent = round(values[str(item["key"])] * 100, 1)
+            unit = str(item["label"])
+            suffix = "" if unit == "normalized" else f"; plug-in unit {unit}"
+            return f"{item['name']}: {percent:g} percent{suffix}"
+
+        def refresh(index: int | None = None, speak: bool = False) -> None:
+            selected = parameter_list.curselection()
+            index = index if index is not None else (selected[0] if selected else 0)
+            parameter_list.delete(0, "end")
+            for item_index in range(len(parameters)):
+                parameter_list.insert("end", parameter_text(item_index))
+            if parameters:
+                index = max(0, min(index, len(parameters) - 1))
+                parameter_list.selection_set(index); parameter_list.activate(index); parameter_list.see(index)
+                message = f"{parameter_text(index)}. Parameter {index + 1} of {len(parameters)}."
+                status.set(message)
+                if speak:
+                    self.screen_reader.speak(message)
+
+        def selected_index() -> int | None:
+            selected = parameter_list.curselection()
+            return selected[0] if selected else None
+
+        def adjust(amount: float) -> str:
+            index = selected_index()
+            if index is not None:
+                key = str(parameters[index]["key"])
+                values[key] = max(0.0, min(1.0, values[key] + amount))
+                refresh(index, speak=True)
+            return "break"
+
+        def set_value(value: float) -> str:
+            index = selected_index()
+            if index is not None:
+                values[str(parameters[index]["key"])] = value
+                refresh(index, speak=True)
+            return "break"
+
+        def reset_parameter() -> None:
+            index = selected_index()
+            if index is not None:
+                key = str(parameters[index]["key"])
+                values[key] = defaults[key]
+                refresh(index, speak=True)
+
+        def preview_plugin() -> None:
+            self._process_vst_plugin(plugin_path, values, preview=True)
+
+        def apply_plugin() -> None:
+            if self._process_vst_plugin(plugin_path, values, preview=False):
+                dialog.destroy()
+
+        adjustment_buttons = tk.Frame(dialog); adjustment_buttons.pack(fill="x", padx=12, pady=4)
+        self.accessible_button(adjustment_buttons, "Decrease Selected Parameter by 10 Percent", lambda: adjust(-0.10)).pack(side="left")
+        self.accessible_button(adjustment_buttons, "Decrease Selected Parameter by 1 Percent", lambda: adjust(-0.01)).pack(side="left", padx=4)
+        self.accessible_button(adjustment_buttons, "Increase Selected Parameter by 1 Percent", lambda: adjust(0.01)).pack(side="left", padx=4)
+        self.accessible_button(adjustment_buttons, "Increase Selected Parameter by 10 Percent", lambda: adjust(0.10)).pack(side="left")
+        action_buttons = tk.Frame(dialog); action_buttons.pack(fill="x", padx=12, pady=(4, 12))
+        self.accessible_button(action_buttons, "Reset Selected Parameter to Plug-in Default", reset_parameter).pack(side="left")
+        self.accessible_button(action_buttons, "Preview VST3 on Selection", preview_plugin).pack(side="left", padx=5)
+        self.accessible_button(action_buttons, "Apply VST3 to Selection", apply_plugin).pack(side="left")
+        self.accessible_button(action_buttons, "Close VST3 Editor", dialog.destroy).pack(side="right")
+        parameter_list.bind("<<ListboxSelect>>", lambda event: refresh(speak=True))
+        parameter_list.bind("<Left>", lambda event: adjust(-0.01))
+        parameter_list.bind("<Right>", lambda event: adjust(0.01))
+        parameter_list.bind("<Prior>", lambda event: adjust(0.10))
+        parameter_list.bind("<Next>", lambda event: adjust(-0.10))
+        parameter_list.bind("<Home>", lambda event: set_value(0.0))
+        parameter_list.bind("<End>", lambda event: set_value(1.0))
+        parameter_list.bind("<FocusIn>", lambda event: self.screen_reader.speak("VST3 parameter list. Up and down select parameters. Left and right change by 1 percent. Page Up and Page Down change by 10 percent."))
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+        refresh()
+        parameter_list.focus_set()
+
     def locate_vst_plugin(self) -> None:
         path = filedialog.askopenfilename(
             title="Choose a VST2 or VST3 plug-in",
@@ -4234,12 +4335,12 @@ class QuickEdit(tk.Tk):
         self.announce(f"VST host opened. In Carla, add {os.path.basename(path)} from {os.path.dirname(path)}.")
 
     def apply_vst_plugin(self, preview: bool = False) -> None:
+        self.open_accessible_vst_editor()
+
+    def _process_vst_plugin(self, plugin_path: str, parameter_values: dict[str, float], preview: bool = False) -> bool:
         document = self.require_document()
         if not document:
-            return
-        plugin_path = filedialog.askopenfilename(title="Choose VST3 plug-in", filetypes=[("VST3 plug-ins", "*.vst3"), ("All files", "*.*")], parent=self)
-        if not plugin_path:
-            return
+            return False
         selection = document.selection()
         start, end = selection if selection else (0, document.frame_count)
         if preview:
@@ -4251,7 +4352,7 @@ class QuickEdit(tk.Tk):
             with wave.open(source_path, "wb") as target:
                 target.setnchannels(document.channels); target.setsampwidth(document.sample_width); target.setframerate(document.frame_rate)
                 target.writeframes(document.slice_bytes(start, end))
-            vst_backend.render_plugin(plugin_path, source_path, result_path)
+            vst_backend.render_plugin(plugin_path, source_path, result_path, parameter_values)
             with wave.open(result_path, "rb") as rendered:
                 frames = rendered.readframes(rendered.getnframes())
             name = vst_backend.plugin_name(plugin_path)
@@ -4259,13 +4360,15 @@ class QuickEdit(tk.Tk):
                 self.stop_effect_preview(); self.effect_preview_files.update((source_path, result_path))
                 self.preview_process = self.media.start_playback(result_path, self.output_device, volume=self.playback_volume)
                 self.announce(f"Previewing {name}, up to 10 seconds.")
-                return
+                return True
             self.stop(announce=False); self._checkpoint()
             document.frames = document.slice_bytes(0, start) + frames + document.slice_bytes(end, document.frame_count)
             document.cursor_frame = start; document.selection_start = document.selection_end = None
             self.refresh_details(); self.announce(f"Applied VST plug-in {name}.")
+            return True
         except Exception as exc:
             messagebox.showerror("VST processing failed", str(exc), parent=self)
+            return False
         finally:
             if not preview:
                 for path in (source_path, result_path):
