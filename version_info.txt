@@ -15,12 +15,12 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'Blazy Enterprises'),
          StringStruct('FileDescription', 'QuickEdit accessible audio editor and workbench'),
-         StringStruct('FileVersion', '1.0.2 RC17'),
+         StringStruct('FileVersion', '1.0.2'),
          StringStruct('InternalName', 'QuickEdit'),
          StringStruct('LegalCopyright', 'Copyright 2026 Blazy Enterprises'),
          StringStruct('OriginalFilename', 'QuickEdit.exe'),
          StringStruct('ProductName', 'QuickEdit'),
-         StringStruct('ProductVersion', '1.0.2 RC17')])
+         StringStruct('ProductVersion', '1.0.2')])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]
