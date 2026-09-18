@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import ctypes
+import base64
 import os
 import struct
+import subprocess
+import sys
+import tempfile
 
 import numpy as np
 
@@ -37,6 +41,28 @@ def inspect_vst2(path: str) -> dict[str, object]:
     architecture = "32-bit" if machine == PE_MACHINE_X86 else "64-bit" if machine == PE_MACHINE_X64 else f"unknown architecture 0x{machine:04x}"
     has_entry = b"VSTPluginMain\0" in data
     return {"machine": machine, "architecture": architecture, "has_vst_entry": has_entry}
+
+
+def _bridge_path() -> str:
+    folder = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
+    return os.path.join(folder, "vst2_bridge_x86.exe")
+
+
+def _run_bridge(arguments: list[str]) -> subprocess.CompletedProcess:
+    bridge = _bridge_path()
+    if not os.path.isfile(bridge):
+        raise OSError("The accessible 32-bit VST2 bridge is missing from this QuickEdit package.")
+    result = subprocess.run(
+        [bridge, *arguments], capture_output=True, text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "The 32-bit VST2 bridge failed without an error message.")
+    return result
+
+
+def _decoded(value: str) -> str:
+    return base64.b64decode(value).decode("utf-8", errors="replace") if value else ""
 
 
 class AEffect(ctypes.Structure):
@@ -173,6 +199,26 @@ class VST2Plugin:
 
 
 def plugin_parameters(path: str) -> tuple[str, list[dict[str, object]]]:
+    inspection = inspect_vst2(path)
+    if not inspection["has_vst_entry"]:
+        raise ValueError(
+            "This DLL is not a VST2 plug-in; it has no VSTPluginMain entry point. It is probably a support or helper DLL. "
+            "Choose the plug-in DLL itself, such as Vinyl.dll rather than iZVinyl.dll."
+        )
+    if inspection["machine"] == PE_MACHINE_X86:
+        name = os.path.splitext(os.path.basename(path))[0]
+        parameters = []
+        for line in _run_bridge(["probe", path]).stdout.splitlines():
+            fields = line.split("\t")
+            if fields[0] == "PLUGIN" and len(fields) >= 2:
+                name = _decoded(fields[1]) or name
+            elif fields[0] == "PARAM" and len(fields) >= 6:
+                parameters.append({
+                    "key": fields[1], "raw": float(fields[2]),
+                    "name": _decoded(fields[3]) or f"Parameter {int(fields[1]) + 1}",
+                    "label": _decoded(fields[4]) or "normalized", "display": _decoded(fields[5]),
+                })
+        return name, parameters
     plugin = VST2Plugin(path)
     try:
         return plugin.name, plugin.parameters()
@@ -181,6 +227,20 @@ def plugin_parameters(path: str) -> tuple[str, list[dict[str, object]]]:
 
 
 def render_plugin(path: str, source_wav: str, target_wav: str, values: dict[str, float] | None = None) -> None:
+    if inspect_vst2(path)["machine"] == PE_MACHINE_X86:
+        handle, parameters_path = tempfile.mkstemp(prefix="quickedit-vst2-x86-", suffix=".txt")
+        os.close(handle)
+        try:
+            with open(parameters_path, "w", encoding="ascii") as target:
+                for key, value in (values or {}).items():
+                    target.write(f"{int(key)}={max(0.0, min(1.0, float(value))):.9g}\n")
+            _run_bridge(["render", path, source_wav, target_wav, parameters_path])
+        finally:
+            try:
+                os.remove(parameters_path)
+            except OSError:
+                pass
+        return
     board = _pedalboard()
     with board.io.AudioFile(source_wav) as source:
         rate = source.samplerate
