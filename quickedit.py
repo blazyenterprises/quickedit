@@ -4260,7 +4260,7 @@ class QuickEdit(tk.Tk):
     def open_accessible_vst_editor(self) -> None:
         plugin_path = filedialog.askopenfilename(
             title="Choose a VST2 or VST3 plug-in",
-            filetypes=[("VST2 and VST3 plug-ins", "*.dll *.vst3"), ("VST2 plug-ins", "*.dll"), ("VST3 plug-ins", "*.vst3"), ("All files", "*.*")],
+            filetypes=[("64-bit VST2 and VST3 plug-ins", "*.dll *.vst3"), ("VST2 DLLs", "*.dll"), ("VST3 plug-ins", "*.vst3"), ("All files", "*.*")],
             parent=self,
         )
         if not plugin_path:

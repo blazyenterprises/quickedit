@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import struct
 
 import numpy as np
 
@@ -20,6 +21,22 @@ EFF_MAINS_CHANGED = 12
 EFF_GET_EFFECT_NAME = 45
 AUDIO_MASTER_VERSION = 1
 PROCESS_REPLACING = 1 << 4
+PE_MACHINE_X86 = 0x014C
+PE_MACHINE_X64 = 0x8664
+
+
+def inspect_vst2(path: str) -> dict[str, object]:
+    with open(path, "rb") as source:
+        data = source.read()
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        raise ValueError("That file is not a Windows DLL.")
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    if pe_offset + 6 > len(data) or data[pe_offset:pe_offset + 4] != b"PE\0\0":
+        raise ValueError("That file does not contain a valid Windows PE header.")
+    machine = struct.unpack_from("<H", data, pe_offset + 4)[0]
+    architecture = "32-bit" if machine == PE_MACHINE_X86 else "64-bit" if machine == PE_MACHINE_X64 else f"unknown architecture 0x{machine:04x}"
+    has_entry = b"VSTPluginMain\0" in data
+    return {"machine": machine, "architecture": architecture, "has_vst_entry": has_entry}
 
 
 class AEffect(ctypes.Structure):
@@ -52,6 +69,19 @@ class VST2Plugin:
     def __init__(self, path: str, sample_rate: float = 44100, block_size: int = 1024) -> None:
         if os.name != "nt":
             raise OSError("VST2 hosting is currently available only on Windows.")
+        inspection = inspect_vst2(path)
+        if inspection["machine"] == PE_MACHINE_X86:
+            raise ValueError(
+                "This is a 32-bit VST2 plug-in. QuickEdit's native accessible host currently supports 64-bit VST2 plug-ins. "
+                "Use the Legacy Carla Graphical Rack for this plug-in until the accessible 32-bit bridge is added."
+            )
+        if inspection["machine"] != PE_MACHINE_X64:
+            raise ValueError(f"QuickEdit cannot host this {inspection['architecture']} DLL.")
+        if not inspection["has_vst_entry"]:
+            raise ValueError(
+                "This DLL is not a VST2 plug-in; it has no VSTPluginMain entry point. It is probably a support or helper DLL. "
+                "Choose the plug-in DLL itself, such as Vinyl.dll rather than iZVinyl.dll."
+            )
         self.path = path
         self.sample_rate = sample_rate
         self.block_size = block_size
