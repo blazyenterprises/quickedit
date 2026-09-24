@@ -42,8 +42,10 @@ class OnlineBackend:
         if not os.path.isfile(self.ytdlp):
             raise MediaError("The yt-dlp runtime was not found.")
         ffmpeg_args = ["--ffmpeg-location", self.ffmpeg_location] if os.path.isdir(self.ffmpeg_location) else []
+        node = os.path.join(os.path.dirname(self.ytdlp), "node.exe")
+        js_args = ["--js-runtimes", "node:" + node] if os.path.isfile(node) else []
         result = subprocess.run(
-            [self.ytdlp, "--no-warnings", "--remote-components", "ejs:github", *ffmpeg_args, *arguments],
+            [self.ytdlp, "--ignore-config", "--no-warnings", "--remote-components", "ejs:github", "--socket-timeout", "20", "--retries", "3", *js_args, *ffmpeg_args, *arguments],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -106,7 +108,7 @@ class OnlineBackend:
 
     def preview_url(self, url: str) -> str:
         url, _ = self.resolve_playlist(url)
-        result = self._yt("-f", "bestaudio/best", "-g", url)
+        result = self._yt("--no-playlist", "-f", "bestaudio/best", "-g", url)
         urls = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         if not urls:
             raise MediaError("No playable audio stream was found.")
@@ -116,7 +118,7 @@ class OnlineBackend:
         url, was_playlist = self.resolve_playlist(url)
         if was_playlist:
             raise MediaError("That address is a live radio playlist. Use Preview Direct URL; live streams do not have a natural end to download.")
-        self._yt("-f", "bestaudio/best", "-x", "--audio-format", "wav", "-o", wav_target, url)
+        self._yt("--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", "wav", "-o", wav_target, url)
         if not os.path.isfile(wav_target):
             raise MediaError("The online audio download did not produce a WAV file.")
 
@@ -130,7 +132,7 @@ class OnlineBackend:
         url, was_playlist = self.resolve_playlist(url)
         if was_playlist:
             raise MediaError("That address is a live radio playlist. Use Preview Direct URL; live streams do not have a natural end to download.")
-        self._yt("-f", "bestaudio/best", "--no-part", "-o", target, url)
+        self._yt("--no-playlist", "-f", "bestaudio/best", "--no-part", "-o", target, url)
         if not os.path.isfile(target):
             raise MediaError("The online audio download did not produce a media file.")
 

@@ -1,5 +1,5 @@
 #define AppName "QuickEdit"
-#define AppVersion "1.0.2"
+#define AppVersion "1.0.3"
 #define AppPublisher "Blazy Enterprises"
 #define AppExeName "QuickEdit.exe"
 
@@ -16,7 +16,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\release
-OutputBaseFilename=QuickEdit-1.0.2-Setup
+OutputBaseFilename=QuickEdit-1.0.3-Setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -33,7 +33,7 @@ Name: "associations"; Description: "Add QuickEdit to Open with for supported aud
 Name: "defaultapps"; Description: "Open Windows Default Apps after installation"; GroupDescription: "File handling:"; Flags: unchecked
 
 [Files]
-Source: "..\portable-dist-1.0.2\QuickEdit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\portable-dist-1.0.3\QuickEdit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\QuickEdit"; Filename: "{app}\{#AppExeName}"

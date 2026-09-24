@@ -1127,6 +1127,9 @@ class QuickEdit(tk.Tk):
         self.announce("Created new stereo audio at 44,100 Hertz and 16 bits.")
 
     def open_file(self) -> None:
+        if self.__dict__.get("workspace_mode") == "library":
+            self.add_files_to_library()
+            return
         path = filedialog.askopenfilename(
             title="Open audio or MIDI",
             initialdir=self.last_open_directory if os.path.isdir(self.last_open_directory) else None,
@@ -1182,15 +1185,16 @@ class QuickEdit(tk.Tk):
         self.wait_window(dialog)
         return result[0] if result else None
 
-    def _open_path(self, path: str, announce: bool = True) -> None:
+    def _open_path(self, path: str, announce: bool = True) -> bool:
         if not os.path.isfile(path):
             self.announce(f"File not found: {os.path.basename(path)}.")
             self._forget_missing_path(path)
-            return
+            return False
         extension = os.path.splitext(path)[1].lower()
         if extension in {".raw", ".pcm"}:
+            previous = self.document
             self._open_raw_pcm(path)
-            return
+            return self.document is not previous
         try:
             decoded_path = path
             temporary = None
@@ -1198,7 +1202,7 @@ class QuickEdit(tk.Tk):
                 renderer = self._choose_midi_render_source()
                 if renderer is None:
                     self.announce("MIDI open canceled.")
-                    return
+                    return False
                 handle, temporary = tempfile.mkstemp(prefix="quickedit-import-", suffix=".wav")
                 os.close(handle)
                 if renderer == "soundfont":
@@ -1207,7 +1211,7 @@ class QuickEdit(tk.Tk):
                     if not self.soundfont_path:
                         os.remove(temporary)
                         self.announce("MIDI open canceled because no SoundFont was selected.")
-                        return
+                        return False
                     self.media.render_midi(path, self.soundfont_path, temporary)
                 else:
                     sample_path = filedialog.askopenfilename(
@@ -1219,7 +1223,7 @@ class QuickEdit(tk.Tk):
                     if not sample_path:
                         os.remove(temporary)
                         self.announce("MIDI open canceled because no sample was selected.")
-                        return
+                        return False
                     root = self._ask_midi_note(
                         "Sample root note",
                         "Which note plays the sample at its original pitch? Enter G, C4, F sharp 3, B flat 2, or a MIDI number:",
@@ -1227,7 +1231,7 @@ class QuickEdit(tk.Tk):
                     if root is None:
                         os.remove(temporary)
                         self.announce("MIDI open canceled because no sample root note was entered.")
-                        return
+                        return False
                     decoded_handle, decoded_sample = tempfile.mkstemp(prefix="quickedit-midi-sample-", suffix=".wav")
                     os.close(decoded_handle)
                     try:
@@ -1269,7 +1273,7 @@ class QuickEdit(tk.Tk):
                 os.remove(temporary)
         except (wave.Error, OSError, ValueError, MediaError) as exc:
             messagebox.showerror("Could not open audio", str(exc), parent=self)
-            return
+            return False
         self.stop()
         self.document = document
         self.undo_stack.clear()
@@ -1280,6 +1284,8 @@ class QuickEdit(tk.Tk):
         if announce:
             self.announce(f"Opened {os.path.basename(path)}. Duration {format_time(document.duration)}.")
 
+        return True
+
     @property
     def _history_path(self) -> str:
         folder = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "QuickEdit")
@@ -1289,6 +1295,12 @@ class QuickEdit(tk.Tk):
         try:
             with open(self._history_path, "r", encoding="utf-8") as source:
                 settings = json.load(source)
+            saved_input = settings.get("input_device")
+            if isinstance(saved_input, dict) and all(isinstance(saved_input.get(key), str) for key in ("id", "name", "backend")):
+                self.input_device = AudioDevice(saved_input["id"], saved_input["name"], saved_input["backend"])
+            saved_output = settings.get("output_device")
+            if isinstance(saved_output, str) and saved_output:
+                self.output_device = saved_output
             self.recent_files = [str(path) for path in settings.get("recent_files", [])][:20]
             self.favorite_files = [str(path) for path in settings.get("favorite_files", [])]
             extension = str(settings.get("online_download_format", self.__dict__.get("online_download_format", ".mp3"))).lower()
@@ -1327,7 +1339,10 @@ class QuickEdit(tk.Tk):
                 settings = json.load(source)
         except (OSError, ValueError, TypeError):
             pass
+        device = self.__dict__.get("input_device")
         settings.update(
+            input_device={"id": device.id, "name": device.name, "backend": device.backend} if device else None,
+            output_device=self.__dict__.get("output_device", "auto"),
             recent_files=self.recent_files,
             favorite_files=self.favorite_files,
             online_download_format=self.__dict__.get("online_download_format", ".mp3"),
@@ -1418,13 +1433,17 @@ class QuickEdit(tk.Tk):
         )
         if not paths:
             return
+        self.last_open_directory = os.path.dirname(os.path.abspath(paths[0]))
         existing = {os.path.normcase(os.path.abspath(path)) for path in self.library_files}
         added = 0
         for path in paths:
             absolute = os.path.abspath(path)
             if os.path.normcase(absolute) not in existing:
                 self.library_files.append(absolute); existing.add(os.path.normcase(absolute)); added += 1
-        self._save_file_history(); self.announce(f"Added {added} audio files to the library.")
+        self.library_queue = list(self.library_files)
+        self._save_file_history()
+        self.announce(f"Added {added} audio files to the library.")
+        self.browse_library("songs")
 
     def remove_missing_library_files(self) -> None:
         before = len(self.library_files)
@@ -1521,7 +1540,10 @@ class QuickEdit(tk.Tk):
             if selected:
                 self.library_queue = [item[1] for item in items]
                 self.library_queue_index = selected[0]
-                path = items[selected[0]][1]; dialog.destroy(); self._open_path(path, announce=False); self.play_library_from_start()
+                path = items[selected[0]][1]
+                if self._open_path(path, announce=False):
+                    dialog.destroy()
+                    self.play_library_from_start()
             return "break"
         def close(event=None) -> str: dialog.destroy(); return "break"
         choices.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Library {category} list. Use arrows and press Enter to play."))
@@ -1783,16 +1805,16 @@ class QuickEdit(tk.Tk):
         self._remember_recent(path)
         self.announce(f"Opened raw PCM. {rate} Hertz, {bits} bit, {channels} channels. Duration {format_time(self.document.duration)}.")
 
-    def _load_online_wav(self, path: str, title: str) -> None:
+    def _load_online_wav(self, path: str, title: str) -> bool:
         try:
             with wave.open(path, "rb") as source:
                 document = AudioDocument(
                     source.getnchannels(), source.getsampwidth(), source.getframerate(),
-                    source.readframes(source.getnframes()), title,
+                    source.readframes(source.getnframes()), title, metadata={"title": title},
                 )
-        except (wave.Error, OSError) as exc:
+        except (wave.Error, EOFError, OSError) as exc:
             messagebox.showerror("Could not import online audio", str(exc), parent=self)
-            return
+            return False
         self.stop(announce=False)
         self.document = document
         self.undo_stack.clear()
@@ -1800,6 +1822,8 @@ class QuickEdit(tk.Tk):
         self.title(f"QuickEdit - {title}")
         self.refresh_details()
         self.announce(f"Imported {title}. Duration {format_time(document.duration)}.")
+
+        return True
 
     def import_online_link(self) -> None:
         url = self._accessible_text_prompt("Import online audio", "YouTube, SoundCloud, or other supported address")
@@ -2148,7 +2172,7 @@ class QuickEdit(tk.Tk):
                     stream = self.online.preview_url(item.url)
                     if self.preview_process and self.preview_process.poll() is None:
                         self.preview_process.terminate()
-                    self.preview_process = self.media.start_playback(stream, self.output_device)
+                    self.preview_process = self.media.start_playback(stream, self.output_device, streaming=True)
                     self.screen_reader.speak(f"Previewing {item.title}.")
                 except MediaError as exc:
                     self.screen_reader.speak(f"Preview failed. {exc}")
@@ -2160,11 +2184,14 @@ class QuickEdit(tk.Tk):
                 if self.preview_process and self.preview_process.poll() is None:
                     self.preview_process.terminate()
                 self.preview_process = None
-                dialog.destroy()
                 if item.provider == "YouTube" and item.kind in {"playlist", "channel"}:
                     self._browse_youtube_collection(item)
+                    dialog.grab_set()
+                elif self._import_online_result(item):
+                    dialog.destroy()
                 else:
-                    self._import_online_result(item)
+                    dialog.grab_set()
+                    choices.focus_set()
             return "break"
 
         def download_selected(event=None) -> str:
@@ -2278,7 +2305,7 @@ class QuickEdit(tk.Tk):
         self.announce(message)
         messagebox.showinfo("YouTube collection download finished", message, parent=self)
 
-    def _import_online_result(self, item: OnlineResult) -> None:
+    def _import_online_result(self, item: OnlineResult) -> bool:
         handle, download_path = tempfile.mkstemp(prefix="quickedit-online-", suffix=".wav")
         os.close(handle)
         raw_path = download_path + ".download"
@@ -2286,15 +2313,20 @@ class QuickEdit(tk.Tk):
             self.announce(f"Importing {item.title}. This may take a while.")
             if item.provider == "AudioVault":
                 if not self.ensure_audiovault_login():
-                    return
+                    return False
                 self.online.audiovault_download(item.url, raw_path)
                 self.media.decode(raw_path, download_path)
             else:
                 self.online.download_source(item.url, raw_path)
                 self.media.decode(raw_path, download_path)
-            self._load_online_wav(download_path, item.title)
-        except (MediaError, OSError) as exc:
+            if not self._load_online_wav(download_path, item.title):
+                return False
+            if self.__dict__.get("workspace_mode") == "library":
+                self.play_library_from_start()
+            return True
+        except (MediaError, OSError, wave.Error, EOFError, ValueError) as exc:
             messagebox.showerror("Online import failed", str(exc), parent=self)
+            return False
         finally:
             if os.path.isfile(download_path):
                 os.remove(download_path)
@@ -3978,8 +4010,8 @@ class QuickEdit(tk.Tk):
                 self.announce("Reached the end of the library queue. Repeat all is off.")
                 return
         self.library_queue = queue; self.library_queue_index = target
-        self._open_path(queue[self.library_queue_index], announce=False)
-        self.play_library_from_start()
+        if self._open_path(queue[self.library_queue_index], announce=False):
+            self.play_library_from_start()
 
     def _library_track_name(self) -> str:
         document = self.document
@@ -4096,7 +4128,7 @@ class QuickEdit(tk.Tk):
         if not document:
             return
         document.cursor_frame = 0
-        self._play_frames(document.frames, 0, 1, "Master play. Playing from the beginning.")
+        self._play_frames(document.frames, 0, 1, f"Playing {self._library_track_name()} from the beginning.")
         self.refresh_details()
 
     def play_reverse(self) -> None:
@@ -4141,7 +4173,7 @@ class QuickEdit(tk.Tk):
             document.slice_bytes(start, document.frame_count),
             start,
             1,
-            f"Playing forward from {format_time(document.seconds_at(start))}." if announce else None,
+            f"Playing {self._library_track_name()} from {format_time(document.seconds_at(start))}." if announce else None,
         )
 
     def _play_reverse_from_cursor(self, announce: bool = True) -> None:
@@ -4230,6 +4262,7 @@ class QuickEdit(tk.Tk):
             return
         if device:
             self.input_device = device
+            self._save_file_history()
             self.announce(f"Recording input set to {device.name}.")
 
     def choose_output_device(self) -> None:
@@ -4240,6 +4273,7 @@ class QuickEdit(tk.Tk):
             return
         if device:
             self.output_device = device.id
+            self._save_file_history()
             self.announce(f"Playback output set to {device.name}.")
 
     @property
@@ -4975,7 +5009,11 @@ class QuickEdit(tk.Tk):
             )
             return
         if not self.input_device or self.input_device not in devices:
-            self.input_device = self._choose_device("Choose recording input", devices)
+            device = self._choose_device("Choose recording input", devices)
+            if not device:
+                return
+            self.input_device = device
+            self._save_file_history()
         if not self.input_device:
             return
         self.stop(announce=False)

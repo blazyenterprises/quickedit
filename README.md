@@ -16,6 +16,17 @@ Cursor movement, selection boundaries, and transport changes are spoken
 directly through NVDA when the controller client supplied with ApricotPlayer is
 available. The visible status line remains as a fallback.
 
+## Version 1.0.3
+
+Download the Windows installer or portable ZIP from the
+[latest release](https://github.com/blazyenterprises/quickedit/releases/latest).
+
+This release fixes library additions, song-title announcements, and remembered
+input/output devices. YouTube includes a bundled JavaScript runtime, and failed
+imports keep the results window open for retry. Select your audio devices once
+in this version to save them for future sessions. The installer is now extracted
+and checked against the packaged files before publication.
+
 ## Run
 
 Python 3.10 or newer is required. No third-party packages are needed yet.
@@ -26,7 +37,7 @@ python quickedit.py
 
 For friends who do not have Python, use the portable Windows package. Unzip the
 entire folder and run `QuickEdit.exe`; its Python runtime, FFmpeg/FFprobe, mpv, yt-dlp,
-FluidSynth, Carla plug-in host, and NVDA controller support are included. The `_internal` folder
+Node.js, FluidSynth, Carla plug-in host, and NVDA controller support are included. The `_internal` folder
 must remain beside `QuickEdit.exe`.
 
 The recommended Windows installer adds QuickEdit to the Start Menu, provides a
