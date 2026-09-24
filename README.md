@@ -16,16 +16,18 @@ Cursor movement, selection boundaries, and transport changes are spoken
 directly through NVDA when the controller client supplied with ApricotPlayer is
 available. The visible status line remains as a fallback.
 
-## Version 1.0.3
+## Version 1.0.4
 
 Download the Windows installer or portable ZIP from the
 [latest release](https://github.com/blazyenterprises/quickedit/releases/latest).
 
-This release fixes library additions, song-title announcements, and remembered
-input/output devices. YouTube includes a bundled JavaScript runtime, and failed
-imports keep the results window open for retry. Select your audio devices once
-in this version to save them for future sessions. The installer is now extracted
-and checked against the packaged files before publication.
+This release fixes library queue position after adding local songs. The browser
+highlights the newly added or currently playing song, and Previous/Next locate
+the actual loaded file instead of using a stale position. Adding files preserves
+the queue order; failed opens do not advance it. Queue boundaries follow your
+chosen library sort order and repeat setting.
+
+Includes the device persistence, YouTube, and verified installer fixes from 1.0.3.
 
 ## Run
 

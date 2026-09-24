@@ -46,7 +46,7 @@ class RegressionTests(unittest.TestCase):
                 app.open_file()
             self.assertEqual(app.library_files, paths)
             self.assertEqual(app.library_queue, paths)
-            app.browse_library.assert_called_once_with('songs')
+            app.browse_library.assert_called_once_with('songs', focus_path=paths[-1])
             other = self.editor()
             other._load_file_history()
             self.assertEqual(other.library_files, paths)

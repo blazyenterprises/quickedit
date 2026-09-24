@@ -1436,14 +1436,23 @@ class QuickEdit(tk.Tk):
         self.last_open_directory = os.path.dirname(os.path.abspath(paths[0]))
         existing = {os.path.normcase(os.path.abspath(path)) for path in self.library_files}
         added = 0
+        added_paths = []
         for path in paths:
             absolute = os.path.abspath(path)
             if os.path.normcase(absolute) not in existing:
                 self.library_files.append(absolute); existing.add(os.path.normcase(absolute)); added += 1
-        self.library_queue = list(self.library_files)
+                added_paths.append(absolute)
+        queue = list(self.__dict__.get("library_queue", []))
+        queued = {os.path.normcase(os.path.abspath(path)) for path in queue}
+        for path in self.library_files:
+            if os.path.normcase(os.path.abspath(path)) not in queued:
+                queue.append(path)
+                queued.add(os.path.normcase(os.path.abspath(path)))
+        self.library_queue = queue
+        self.library_queue_index = self._current_library_index(queue)
         self._save_file_history()
         self.announce(f"Added {added} audio files to the library.")
-        self.browse_library("songs")
+        self.browse_library("songs", focus_path=added_paths[-1] if added_paths else os.path.abspath(paths[-1]))
 
     def remove_missing_library_files(self) -> None:
         before = len(self.library_files)
@@ -1496,7 +1505,7 @@ class QuickEdit(tk.Tk):
             return (-added_index,)
         return artist.casefold(), album.casefold(), disc, track, title.casefold()
 
-    def browse_library(self, category: str, selected_paths: list[str] | None = None) -> None:
+    def browse_library(self, category: str, selected_paths: list[str] | None = None, focus_path: str | None = None) -> None:
         if category == "recent":
             paths = [path for path in self.recent_files if os.path.isfile(path)]
         elif category == "favorites":
@@ -1530,7 +1539,12 @@ class QuickEdit(tk.Tk):
         tk.Label(dialog, text=f"{category.title()} list").pack(anchor="w", padx=12, pady=(12, 3))
         choices = tk.Listbox(dialog, exportselection=False, height=22, width=100, takefocus=True)
         for label, path, sort_key in items: choices.insert("end", label)
-        choices.selection_set(0); choices.activate(0); choices.pack(fill="both", expand=True, padx=12)
+        if focus_path is None:
+            document = self.__dict__.get("document")
+            focus_path = document.source_path if document else None
+        selection = matching_path_index([(item[1], False) for item in items], focus_path)
+        choices.selection_set(selection); choices.activate(selection); choices.see(selection)
+        choices.pack(fill="both", expand=True, padx=12)
         buttons = tk.Frame(dialog); buttons.pack(fill="x", padx=12, pady=12)
         def speak(event=None) -> None:
             selected = choices.curselection()
@@ -1538,10 +1552,10 @@ class QuickEdit(tk.Tk):
         def open_song(event=None) -> str:
             selected = choices.curselection()
             if selected:
-                self.library_queue = [item[1] for item in items]
-                self.library_queue_index = selected[0]
                 path = items[selected[0]][1]
                 if self._open_path(path, announce=False):
+                    self.library_queue = [item[1] for item in items]
+                    self.library_queue_index = self._current_library_index(self.library_queue)
                     dialog.destroy()
                     self.play_library_from_start()
             return "break"
@@ -3993,24 +4007,43 @@ class QuickEdit(tk.Tk):
         if not changed:
             self.screen_reader.speak(f"Playback volume {self.playback_volume} percent. This applies when playback starts.")
 
+    def _current_library_index(self, queue: list[str]) -> int:
+        document = self.__dict__.get("document")
+        if not document or not document.source_path:
+            return -1
+        current = os.path.normcase(os.path.abspath(document.source_path))
+        return next((i for i, path in enumerate(queue)
+                     if os.path.normcase(os.path.abspath(path)) == current), -1)
+
     def play_adjacent_library_song(self, direction: int) -> None:
         queue = [path for path in self.library_queue if os.path.isfile(path)]
+        library = [path for path in self.library_files if os.path.isfile(path)]
         if not queue:
-            queue = [path for path in self.library_files if os.path.isfile(path)]
+            queue = library
+        index = self._current_library_index(queue)
+        # A file opened outside the browser can belong to the library but not
+        # the old queue. Locate it in that library instead of trusting a stale index.
+        if index < 0 and self._current_library_index(library) >= 0:
+            queue = library
+            index = self._current_library_index(queue)
+        self.library_queue = queue
+        self.library_queue_index = index
         if not queue:
-            self.announce("There is no library song queue. Open a song from Library View first."); return
-        current = os.path.abspath(self.document.source_path) if self.document and os.path.isfile(self.document.source_path) else ""
-        try: index = next(i for i, path in enumerate(queue) if os.path.normcase(os.path.abspath(path)) == os.path.normcase(current))
-        except StopIteration: index = self.library_queue_index if 0 <= self.library_queue_index < len(queue) else 0
+            self.announce("There is no library song queue. Open a song from Library View first.")
+            return
+        if index < 0:
+            self.announce("The current song is not in the library queue. Choose a song from Library View first.")
+            return
         target = index + direction
         if not 0 <= target < len(queue):
             if self.repeat_mode == "all":
                 target %= len(queue)
             else:
-                self.announce("Reached the end of the library queue. Repeat all is off.")
+                boundary = "beginning" if direction < 0 else "end"
+                self.announce(f"Reached the {boundary} of the library queue. Repeat all is off.")
                 return
-        self.library_queue = queue; self.library_queue_index = target
-        if self._open_path(queue[self.library_queue_index], announce=False):
+        if self._open_path(queue[target], announce=False):
+            self.library_queue_index = target
             self.play_library_from_start()
 
     def _library_track_name(self) -> str:
