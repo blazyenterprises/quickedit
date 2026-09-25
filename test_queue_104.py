@@ -44,7 +44,7 @@ class QueuePositionTests(unittest.TestCase):
         Path(self.paths[0]).unlink()
         self.app.play_adjacent_library_song(-1)
         self.assertEqual(self.app.document.source_path, self.paths[1])
-        self.assertEqual(self.app.library_queue_index, 0)
+        self.assertEqual(self.app.library_queue_index, 1)
 
     def test_failed_open_keeps_current_position(self):
         self.app._open_path.side_effect = None
@@ -108,7 +108,7 @@ class QueuePositionTests(unittest.TestCase):
         choices.selection_set.side_effect=lambda i: selected.__setitem__(0,i)
         choices.curselection.side_effect=lambda: (selected[0],)
         callbacks={}
-        choices.bind.side_effect=lambda key, callback: callbacks.update({key:callback})
+        choices.bind.side_effect=lambda key, callback, **kwargs: callbacks.update({key:callback})
         a.wait_window=lambda dialog: callbacks['<Return>']()
         with patch('quickedit.filedialog.askopenfilenames',return_value=[self.paths[2]]),patch('quickedit.tk.Toplevel'),patch('quickedit.tk.Label'),patch('quickedit.tk.Frame'),patch('quickedit.tk.Listbox',return_value=choices):
             a.add_files_to_library()

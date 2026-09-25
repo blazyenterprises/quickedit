@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import ctypes
 import json
+import math
 import os
 import random
 import re
@@ -339,8 +340,11 @@ class QuickEdit(tk.Tk):
         self.theme_manager.apply()
         self.bind_all("<Map>", self._theme_new_widget, add="+")
         self.after(1500, self._poll_system_theme)
+        self.after(100, lambda: library_tools.index_library(self))
         if initial_path:
             self.after(0, lambda: self._open_path(os.path.abspath(initial_path)))
+        elif self.workspace_mode == "library":
+            self.after(0, self._restore_library_session)
 
     def _build_menu(self) -> None:
         if self.workspace_mode == "library":
@@ -533,6 +537,8 @@ class QuickEdit(tk.Tk):
         library.add_command(label="Add Audio Files to Library", command=self.add_files_to_library)
         library.add_command(label="Batch Convert Audio", command=self.batch_convert_audio)
         library.add_command(label="Remove Missing Library Files", command=self.remove_missing_library_files)
+        library.add_command(label="Refresh Library Information", command=lambda: library_tools.index_library(self, refresh=True))
+        library.add_command(label="Library Index Status", command=lambda: library_tools.library_index_status(self))
         library.add_separator()
         library.add_command(label="Add Folders to Library", command=lambda: library_tools.choose_folders(self))
         library.add_command(label="Song Information Display", command=lambda: library_tools.configure_display(self))
@@ -1298,6 +1304,7 @@ class QuickEdit(tk.Tk):
                 settings = json.load(source)
             if not isinstance(settings, dict):
                 return
+            self.library_session = self._validated_library_session(settings.get("library_session"))
             # Validate each setting independently: one damaged preference must
             # not prevent later, valid library and device preferences loading.
             for key in ("recent_files", "favorite_files", "library_files", "library_display_fields"):
@@ -1379,7 +1386,64 @@ class QuickEdit(tk.Tk):
         except (OSError, ValueError, TypeError):
             pass
 
+    @staticmethod
+    def _validated_library_session(value):
+        if not isinstance(value, dict) or not isinstance(value.get("path"), str) or not value["path"]:
+            return {}
+        seconds = value.get("seconds", 0)
+        try:
+            if not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds < 0:
+                seconds = 0
+        except OverflowError:
+            seconds = 0
+        queue = value.get("queue", [])
+        queue = [p for p in queue if isinstance(p, str) and p] if isinstance(queue, list) else []
+        return {"path": value["path"], "seconds": seconds, "queue": queue}
+
+    def _capture_library_session(self):
+        document = self.__dict__.get("document")
+        if self.__dict__.get("_restoring_library_session"):
+            return
+        if self.__dict__.get("workspace_mode") != "library" or not isinstance(document, AudioDocument) or not document.source_path:
+            return
+        path = document.source_path
+        # Only a file-backed song can be reopened. Validate this one path,
+        # not the rest of its playback queue.
+        if not os.path.isfile(path):
+            return
+        queue = list(self.__dict__.get("library_queue", []))
+        if self._current_library_index(queue) < 0:
+            queue = [path]
+        self.library_session = {"path": path, "seconds": document.seconds_at(document.cursor_frame), "queue": queue}
+
+    def _restore_library_session(self):
+        session = self._validated_library_session(self.__dict__.get("library_session"))
+        if not session:
+            return
+        if not os.path.isfile(session["path"]):
+            self.announce("The last song is unavailable. Choose another song from the library.")
+            return
+        self._restoring_library_session = True
+        try:
+            if not self._open_path(session["path"], announce=False):
+                return
+        finally:
+            self._restoring_library_session = False
+        self.library_queue = session["queue"]
+        self.library_queue_index = self._current_library_index(self.library_queue)
+        if self.library_queue_index < 0:
+            self.library_queue = [session["path"]]
+            self.library_queue_index = 0
+        document = self.document
+        document.cursor_frame = min(document.frame_count, round(min(session["seconds"], document.duration) * document.frame_rate))
+        self.paused = True
+        self.play_direction = 1
+        self.refresh_details()
+        self.library_session = session
+        self.announce(f"Restored {self._library_track_name()} at {format_time(document.seconds_at(document.cursor_frame))}. Press Space to play.")
+
     def _save_file_history(self) -> None:
+        self._capture_library_session()
         settings = {}
         try:
             with open(self._history_path, "r", encoding="utf-8") as source:
@@ -1403,6 +1467,7 @@ class QuickEdit(tk.Tk):
             library_playlists=self.__dict__.get("library_playlists", {}),
             library_display_fields=library_tools.valid_fields(self.__dict__.get("library_display_fields")),
             library_sort_mode=self.__dict__.get("library_sort_mode", "track"),
+            library_session=self.__dict__.get("library_session", {}),
             repeat_mode=self.__dict__.get("repeat_mode", "off"),
             muted_midi_channels=sorted(self.__dict__.get("muted_midi_channels", set())),
             saved_streams=self.__dict__.get("saved_streams", []),
@@ -1576,7 +1641,7 @@ class QuickEdit(tk.Tk):
             return (-added_index,)
         return artist.casefold(), album.casefold(), disc, track, title.casefold()
 
-    def browse_library(self, category: str, selected_paths: list[str] | None = None, focus_path: str | None = None, back=None) -> None:
+    def browse_library(self, category: str, selected_paths: list[str] | None = None, focus_path: str | None = None, back=None, album_tracks=False) -> None:
         if category == "recent":
             paths = list(self.recent_files)
         elif category == "favorites":
@@ -1585,12 +1650,12 @@ class QuickEdit(tk.Tk):
             paths = list(selected_paths)
         else:
             paths = list(self.library_files)
-        self._load_library_records(paths, lambda records: self._show_library_records(category, records, focus_path, back), back)
+        self._load_library_records(paths, lambda records: self._show_library_records(category, records, focus_path, back, album_tracks), back)
 
     def _load_library_records(self, paths, ready, back=None):
         library_tools.load_library_records(self, paths, ready, back)
 
-    def _show_library_records(self, category, records, focus_path=None, back=None):
+    def _show_library_records(self, category, records, focus_path=None, back=None, album_tracks=False):
         if category in {"artist", "album"}:
             self._browse_library_groups(category, [path for path, tags in records], back, records=records)
             return
@@ -1601,7 +1666,15 @@ class QuickEdit(tk.Tk):
             track = tags.get("track", "unknown")
             label = library_tools.song_label(tags, path, self.__dict__.get("library_display_fields"))
             sort_key = self._selected_library_sort_key(tags, title, artist, album, added_index)
-            if self.library_sort_mode == "added" and category == "recent":
+            if album_tracks:
+                # An album has its own sequence, independent of the ordering
+                # used to browse the whole library (including compilations).
+                inferred = self._infer_tags_from_path(path)
+                disc = self._metadata_number(tags.get("disc"), 1)
+                track_number = self._metadata_number(tags.get("track"),
+                    self._metadata_number(inferred.get("track"), 1_000_000))
+                sort_key = (disc, track_number, os.path.basename(path).casefold(), title.casefold())
+            elif self.library_sort_mode == "added" and category == "recent":
                 sort_key = (added_index,)
             items.append((label, path, sort_key))
         if self.library_sort_mode == "shuffle":
@@ -1635,6 +1708,8 @@ class QuickEdit(tk.Tk):
         def close(event=None) -> str: dialog.destroy(); return "break"
         choices.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Library {category} list. Use arrows and press Enter to play."))
         choices.bind("<<ListboxSelect>>", speak); choices.bind("<Return>", open_song); choices.bind("<Double-Button-1>", open_song)
+        titles = {path: tags.get("title") or os.path.splitext(os.path.basename(path))[0] for path, tags in records}
+        library_tools.bind_first_letter_navigation(choices, [titles[item[1]] for item in items])
         if back:
             def go_back(event=None):
                 dialog.destroy(); back(); return "break"
@@ -1665,6 +1740,7 @@ class QuickEdit(tk.Tk):
         choices.bind("<Return>", open_item); choices.bind("<Double-Button-1>", open_item)
         choices.bind("<FocusIn>", lambda event: self.screen_reader.speak(title + ". Use arrows and Enter to open."))
         choices.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(choices.get(choices.curselection()[0])) if choices.curselection() else None)
+        library_tools.bind_first_letter_navigation(choices, [label for label, callback in entries])
         self.accessible_button(dialog, "Open", open_item).pack(side="left")
         if back:
             self.accessible_button(dialog, "Back", go_back).pack(side="left")
@@ -1689,7 +1765,7 @@ class QuickEdit(tk.Tk):
                         ], parent, selected)
                     artist_menu()
                 else:
-                    self.browse_library(label + " tracks", members, back=parent)
+                    self.browse_library(label + " tracks", members, back=parent, album_tracks=True)
             entries.append((label, open_group))
         self._library_navigation("Artists" if category == "artist" else "Albums", entries, back, selected)
 
@@ -4158,15 +4234,15 @@ class QuickEdit(tk.Tk):
                      if os.path.normcase(os.path.abspath(path)) == current), -1)
 
     def play_adjacent_library_song(self, direction: int) -> None:
-        queue = [path for path in self.library_queue if os.path.isfile(path)]
-        library = [path for path in self.library_files if os.path.isfile(path)]
+        queue = list(self.library_queue)
+        library = self.library_files
         if not queue:
-            queue = library
+            queue = list(library)
         index = self._current_library_index(queue)
         # A file opened outside the browser can belong to the library but not
         # the old queue. Locate it in that library instead of trusting a stale index.
         if index < 0 and self._current_library_index(library) >= 0:
-            queue = library
+            queue = list(library)
             index = self._current_library_index(queue)
         self.library_queue = queue
         self.library_queue_index = index
@@ -4177,13 +4253,30 @@ class QuickEdit(tk.Tk):
             self.announce("The current song is not in the library queue. Choose a song from Library View first.")
             return
         target = index + direction
-        if not 0 <= target < len(queue):
-            if self.repeat_mode == "all":
-                target %= len(queue)
-            else:
-                boundary = "beginning" if direction < 0 else "end"
-                self.announce(f"Reached the {boundary} of the library queue. Repeat all is off.")
-                return
+        # Validate only the song being requested, not every file in the library.
+        # Missing entries are removed lazily; wrap at most one remaining queue.
+        for unused in range(len(queue)):
+            if not queue:
+                break
+            if not 0 <= target < len(queue):
+                if self.repeat_mode == "all":
+                    target %= len(queue)
+                else:
+                    boundary = "beginning" if direction < 0 else "end"
+                    self.announce(f"Reached the {boundary} of the library queue. Repeat all is off.")
+                    return
+            if os.path.isfile(queue[target]):
+                break
+            queue.pop(target)
+            self.library_queue_index = self._current_library_index(queue)
+            if direction < 0:
+                target -= 1
+        else:
+            self.announce("No available songs remain in this queue.")
+            return
+        if not queue:
+            self.announce("No available songs remain in this queue.")
+            return
         if self._open_path(queue[target], announce=False):
             self.library_queue_index = target
             self.play_library_from_start()
@@ -5388,7 +5481,7 @@ class QuickEdit(tk.Tk):
                     self.master_play()
                 return
             if forward and library_track:
-                queue = [path for path in self.library_queue if os.path.isfile(path)]
+                queue = self.library_queue
                 index = self._current_library_index(queue)
                 if index >= 0 and (index + 1 < len(queue) or self.repeat_mode == "all"):
                     self.play_adjacent_library_song(1)
@@ -5455,6 +5548,10 @@ class QuickEdit(tk.Tk):
     def destroy(self) -> None:
         if not self._confirm_document_change():
             return
+        if self.__dict__.get("workspace_mode") == "library":
+            if self.__dict__.get("playing"):
+                self._sync_transport_cursor()
+            self._save_file_history()
         pending_library = self.__dict__.get("_library_load")
         if pending_library:
             pending_library["cancel"]()

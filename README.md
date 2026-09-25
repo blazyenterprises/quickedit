@@ -16,6 +16,31 @@ Cursor movement, selection boundaries, and transport changes are spoken
 directly through NVDA when the controller client supplied with ApricotPlayer is
 available. The visible status line remains as a fallback.
 
+## Version 1.0.12
+
+Library startup restores the last local song, playback position, and queue,
+paused. Press Space to continue. Opening a file explicitly takes precedence.
+Artists, albums, and song lists support first-letter navigation; repeated
+letters cycle through matches. Song matching uses titles regardless of the
+configured information display order.
+
+## Version 1.0.11
+
+Library views open from a persistent catalog, without rereading every audio file.
+An existing library is indexed once in the background; filenames and folders
+remain browsable while tags are indexed. New songs are indexed in the background.
+Reopen a view to see newly indexed tags. Library Index Status reports progress.
+Refresh Library Information updates tags changed outside QuickEdit.
+Next/Previous check only the requested song and skip missing targets; shuffle
+creates a list of paths and opens only the chosen song.
+
+## Version 1.0.10
+
+Album track lists and their playback queues use disc and track number order,
+independently of the general library sorting preference. Numbered filenames
+provide a fallback for missing track tags. Explicit Shuffle remains available.
+Keyboard arrow repeat behavior is unchanged.
+
 ## Version 1.0.9
 
 Three independent reviews covered accessibility, library/playback, and

@@ -1,5 +1,9 @@
 """Library grouping, song labels, and accessible multi-folder import."""
 import os
+import json
+import re
+import sqlite3
+from contextlib import closing
 import queue
 import threading
 import tkinter as tk
@@ -12,99 +16,172 @@ AUDIO_EXTENSIONS = set('.wav .mp3 .flac .ogg .oga .opus .m4a .aac .wma .aiff .ai
 
 
 class MetadataCache:
-    """Read tags off the UI thread; changed files invalidate their cached tags."""
-    def __init__(self, read_metadata, normalize):
+    """Persistent catalog; browsing never stats or probes the audio files."""
+    def __init__(self, read_metadata, normalize, database=None):
         self.read_metadata = read_metadata
         self.normalize = normalize
         self.entries = {}
         self.lock = threading.Lock()
+        self.probe_lock = threading.Lock()
+        self.pending = set()
+        self.jobs = queue.Queue()
+        self.worker = None
+        self.database = database
+        self.error = None
+        if database:
+            try:
+                os.makedirs(os.path.dirname(database), exist_ok=True)
+                with closing(sqlite3.connect(database)) as db, db:
+                    db.execute('CREATE TABLE IF NOT EXISTS tracks (path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER, tags TEXT)')
+                    for path, mtime, size, raw in db.execute('SELECT path, mtime, size, tags FROM tracks'):
+                        try:
+                            tags = json.loads(raw)
+                            if isinstance(tags, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in tags.items()):
+                                self.entries[path] = ((mtime, size), tags)
+                        except (ValueError, TypeError):
+                            pass
+            except (OSError, sqlite3.Error) as error:
+                self.error = str(error)
 
-    def load(self, paths, cancelled):
+    @staticmethod
+    def key(path):
+        return os.path.normcase(os.path.abspath(path))
+
+    def snapshot(self, paths):
+        # The lock is never held while probing files or writing the database.
+        with self.lock:
+            cached = {self.key(p): self.entries.get(self.key(p)) for p in paths}
+        return [(p, dict(cached[self.key(p)][1]) if cached[self.key(p)] else self.fallback(p)) for p in paths]
+
+    @staticmethod
+    def fallback(path):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        tags = {'title': stem, 'album': os.path.basename(os.path.dirname(path)) or 'Unknown album'}
+        match = re.match(r'^(\d{1,3})[ ._-]+(.+)$', stem)
+        if match:
+            tags.update(track=str(int(match[1])), title=match[2])
+        return tags
+
+    def store(self, path, signature, tags):
+        key = self.key(path)
+        with self.lock:
+            self.entries[key] = (signature, dict(tags))
+        if self.database:
+            try:
+                with closing(sqlite3.connect(self.database)) as db, db:
+                    db.execute('INSERT OR REPLACE INTO tracks VALUES (?, ?, ?, ?)',
+                               (key, signature[0], signature[1], json.dumps(tags)))
+            except (OSError, sqlite3.Error) as error:
+                self.error = str(error)
+
+    def load(self, paths, cancelled, refresh=False):
+        """Index selected paths on a worker; retain tags if a probe fails."""
         records = []
         for path in paths:
-            if cancelled.is_set():
-                break
+            if cancelled.is_set(): break
             try:
                 stat = os.stat(path)
                 signature = (stat.st_mtime_ns, stat.st_size)
-                if not os.path.isfile(path):
-                    continue
+                if not os.path.isfile(path): continue
             except OSError:
                 continue
-            key = os.path.normcase(os.path.abspath(path))
-            # Serialize probes so a superseded request cannot spawn a second
-            # probe for the same file. No Tk calls or UI waits occur here.
-            with self.lock:
-                if cancelled.is_set():
-                    break
-                cached = self.entries.get(key)
-                if cached is None or cached[0] != signature:
+            key = self.key(path)
+            with self.probe_lock:
+                if cancelled.is_set(): break
+                with self.lock: cached = self.entries.get(key)
+                if refresh or cached is None or cached[0] != signature:
                     try:
                         tags = self.normalize(self.read_metadata(path))
-                    except (OSError, MediaError):
-                        # A transient probe failure must not become a successful
-                        # cache entry that hides tags until the file changes.
-                        records.append((path, {}))
+                    except (OSError, MediaError) as error:
+                        self.error = str(error)
+                        records.append((path, dict(cached[1]) if cached else {}))
                         continue
-                    self.entries[key] = (signature, tags)
-                records.append((path, dict(self.entries[key][1])))
+                    self.store(path, signature, tags)
+                    cached = (signature, tags)
+                records.append((path, dict(cached[1])))
         return records
+
+    def index_async(self, paths, refresh=False):
+        with self.lock:
+            if refresh: self.error = None
+            for path in paths:
+                key = self.key(path)
+                if key not in self.pending and (refresh or key not in self.entries):
+                    self.pending.add(key)
+                    self.jobs.put((path, refresh))
+            if self.pending and (self.worker is None or not self.worker.is_alive()):
+                self.worker = threading.Thread(target=self._index_worker, daemon=True)
+                self.worker.start()
+
+    def _index_worker(self):
+        while True:
+            with self.lock:
+                try: path, refresh = self.jobs.get_nowait()
+                except queue.Empty:
+                    self.worker = None
+                    return
+            try:
+                if not self.load([path], threading.Event(), refresh):
+                    self.error = 'Some library files are unavailable.'
+            except Exception as error:
+                self.error = str(error)
+            finally:
+                with self.lock: self.pending.discard(self.key(path))
+
+
+def library_catalog(app):
+    cache = app.__dict__.get('_library_metadata_cache')
+    if cache is None:
+        history = getattr(app, '_history_path', None)
+        database = os.path.join(os.path.dirname(history), 'library.sqlite3') if isinstance(history, str) else None
+        cache = app._library_metadata_cache = MetadataCache(app.media.read_metadata, app._normalized_metadata, database)
+    return cache
+
+
+def index_library(app, refresh=False):
+    cache = library_catalog(app)
+    cache.index_async(list(app.library_files), refresh)
+    if refresh:
+        app.announce('Updating library information in the background. Browsing and playback remain available. Reopen a view to see updated information.')
+
+
+def library_index_status(app):
+    cache = library_catalog(app)
+    with cache.lock: count = len(cache.pending)
+    message = f'Library information is updating. {count} songs remaining.' if count else 'Library information is up to date. Reopen a view to see updates.'
+    if cache.error: message += ' Some information could not be saved or read. Use Refresh Library Information to retry.'
+    app.announce(message)
 
 
 def load_library_records(app, paths, ready, back=None):
-    """Cancelable background load; only the latest request may open a view."""
-    previous = app.__dict__.get('_library_load')
-    if previous:
-        previous['cancel']()
-    cache = app.__dict__.get('_library_metadata_cache')
-    if cache is None:
-        cache = app._library_metadata_cache = MetadataCache(app.media.read_metadata, app._normalized_metadata)
-    cancelled = threading.Event()
-    result = queue.Queue()
-    dialog = tk.Toplevel(app)
-    dialog.title('Loading Library')
-    dialog.transient(app)
-    tk.Label(dialog, text='Reading library information. You can cancel or choose another library view.').pack(padx=16, pady=16)
-    request = {'cancelled': cancelled}
-    def cancel(event=None):
-        cancelled.set()
-        dialog.destroy()
-        if app.__dict__.get('_library_load') is request:
-            app._library_load = None
+    """Show a catalog snapshot immediately; index only unknown songs in background."""
+    cache = library_catalog(app)
+    records = cache.snapshot(paths)
+    cache.index_async(paths)
+    if records: ready(records)
+    else: app.announce('This library section has no songs.')
+
+
+def bind_first_letter_navigation(widget, names):
+    """Cycle by the actual name, regardless of the spoken display fields."""
+    names = [name.lstrip().casefold() for name in names]
+    def navigate(event):
+        char = event.char
+        if not char or not char.isalnum() or event.state & (0x0004 | 0x0008 | 0x20000):
+            return None
+        selected = widget.curselection()
+        start = selected[0] if selected else -1
+        for offset in range(1, len(names) + 1):
+            index = (start + offset) % len(names)
+            if names[index].startswith(char.casefold()):
+                widget.selection_clear(0, 'end')
+                widget.selection_set(index)
+                widget.activate(index)
+                widget.see(index)
+                widget.event_generate('<<ListboxSelect>>')
+                break
         return 'break'
-    request['cancel'] = cancel
-    app._library_load = request
-    cancel_button = app.accessible_button(dialog, 'Cancel', cancel)
-    cancel_button.pack(pady=8)
-    cancel_button.focus_set()
-    dialog.protocol('WM_DELETE_WINDOW', cancel)
-    dialog.bind('<Escape>', cancel)
-    def go_back(event=None):
-        cancel()
-        if back: back()
-        return 'break'
-    dialog.bind('<BackSpace>', go_back)
-    dialog.bind('<Alt-Left>', go_back)
-    def work():
-        try: result.put((cache.load(paths, cancelled), None))
-        except Exception as error: result.put((None, str(error)))
-    threading.Thread(target=work, daemon=True).start()
-    def finish():
-        if cancelled.is_set() or app.__dict__.get('_library_load') is not request:
-            return
-        try: records, error = result.get_nowait()
-        except queue.Empty:
-            app.after(50, finish)
-            return
-        cancel()
-        if error: app.announce('Could not read the library: ' + error)
-        elif not records: app.announce('This library section has no available audio files.')
-        else: ready(records)
-    # A cached view usually finishes before this announcement is needed.
-    def loading_notice():
-        if not cancelled.is_set(): app.announce('Reading library information. The window is still available; Escape in the loading window cancels.')
-    app.after(500, loading_notice)
-    app.after(50, finish)
+    widget.bind('<KeyPress>', navigate, add='+')
 
 
 def bind_folder_announcements(widget, name, speak):
