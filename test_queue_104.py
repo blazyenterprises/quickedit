@@ -14,6 +14,7 @@ class QueuePositionTests(unittest.TestCase):
         for p in self.paths: Path(p).touch()
         self.app = object.__new__(QuickEdit)
         a = self.app
+        a._load_library_records = lambda paths, ready, back=None: ready([(p, a._normalized_metadata(a.media.read_metadata(p))) for p in paths])
         a.library_files = self.paths.copy()
         a.library_queue = self.paths.copy()
         a.library_queue_index = 0

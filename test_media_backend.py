@@ -11,6 +11,9 @@ class MediaEncodingTests(unittest.TestCase):
         backend.ffmpeg = "ffmpeg.exe"
         commands = []
         backend._run = commands.append
+        # These tests inspect encoder arguments; transactional writes have
+        # separate tests that create and verify real destination files.
+        backend.encode = backend._encode_direct
         return backend, commands
 
     def test_mp3_uses_requested_rate_channels_and_bitrate(self):
@@ -48,7 +51,7 @@ class MediaEncodingTests(unittest.TestCase):
     def test_read_metadata_normalizes_probe_keys(self):
         backend = object.__new__(MediaBackend)
         backend.ffprobe = "ffprobe.exe"
-        backend._run = lambda command: SimpleNamespace(stdout='{"format":{"tags":{"TITLE":"Example","Artist":"Someone"}}}')
+        backend._run = lambda command, **kwargs: SimpleNamespace(stdout='{"format":{"tags":{"TITLE":"Example","Artist":"Someone"}}}')
         self.assertEqual(backend.read_metadata("song.mp3"), {"title": "Example", "artist": "Someone"})
 
     @patch("media_backend.subprocess.Popen")

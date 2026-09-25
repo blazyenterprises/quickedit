@@ -16,10 +16,13 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import wave
 import winsound
 
-from media_backend import AudioDevice, MediaBackend, MediaError
+from media_backend import AudioDevice, MediaBackend, MediaError, atomic_output, replace_file
 from online_backend import OnlineBackend, OnlineResult
 from credential_store import CredentialStore
 from theme_manager import ThemeManager
+import accessible_combo
+import export_options
+import library_tools
 import audio_effects
 import signal_generator
 from soundfont_tools import Preset, list_presets, one_note_midi
@@ -258,6 +261,7 @@ class QuickEdit(tk.Tk):
         self.geometry("760x430")
         self.minsize(620, 360)
         self.document: AudioDocument | None = None
+        self._saved_document_state = None
         self.app_dir = application_dir()
         self.media = MediaBackend(self.app_dir)
         self.online = OnlineBackend(self.app_dir)
@@ -307,6 +311,7 @@ class QuickEdit(tk.Tk):
         self.workspace_mode = "editor"
         self.library_files: list[str] = []
         self.library_playlists: dict[str, list[str]] = {}
+        self.library_display_fields = library_tools.DEFAULT_FIELDS.copy()
         self.library_sort_mode = "track"
         self.repeat_mode = "off"
         self.muted_midi_channels: set[int] = set()
@@ -355,7 +360,6 @@ class QuickEdit(tk.Tk):
         file_menu.add_cascade(label="Favorites", menu=self.favorites_menu)
         file_menu.add_command(label="Save\tCtrl+S", command=self.save)
         file_menu.add_command(label="Save As\tCtrl+Shift+S", command=self.save_as)
-        file_menu.add_command(label="Output Format Settings", command=self.output_format_settings)
         file_menu.add_command(label="Batch Convert Audio", command=self.batch_convert_audio)
         file_menu.add_separator()
         file_menu.add_command(label="Edit Audio Tags", command=self.edit_tags)
@@ -530,6 +534,8 @@ class QuickEdit(tk.Tk):
         library.add_command(label="Batch Convert Audio", command=self.batch_convert_audio)
         library.add_command(label="Remove Missing Library Files", command=self.remove_missing_library_files)
         library.add_separator()
+        library.add_command(label="Add Folders to Library", command=lambda: library_tools.choose_folders(self))
+        library.add_command(label="Song Information Display", command=lambda: library_tools.configure_display(self))
         library.add_command(label="Artists", command=lambda: self.browse_library("artist"))
         library.add_command(label="Albums", command=lambda: self.browse_library("album"))
         library.add_command(label="All Songs", command=lambda: self.browse_library("songs"))
@@ -826,10 +832,15 @@ class QuickEdit(tk.Tk):
                 if self._activate_menu_letter(posted_menu, event.char.lower()):
                     return "break"
             return None
-        focus = self.focus_get()
-        if focus and focus.winfo_toplevel() is not self:
+        # Native ttk popup lists have Tcl widget paths but no Python widget.
+        # Never treat an unresolved focus as permission to edit the document.
+        try:
+            focus = self.focus_get()
+        except (KeyError, tk.TclError):
             return None
-        if focus and focus.winfo_class() in {"Entry", "TEntry", "Text", "Spinbox", "TSpinbox"}:
+        if focus is None or focus.winfo_toplevel() is not self:
+            return None
+        if focus.winfo_class() in {"Entry", "TEntry", "Text", "Spinbox", "TSpinbox", "TCombobox"}:
             return None
 
         key = event.keysym.lower()
@@ -990,27 +1001,7 @@ class QuickEdit(tk.Tk):
             entry.bind("<KeyPress-Delete>", announce_deletion, add="+")
 
     def bind_accessible_combobox(self, box: ttk.Combobox, label: str, variable: tk.StringVar) -> None:
-        """Announce a combo box reliably on focus and selection changes."""
-        pending_announcement: list[str | None] = [None]
-        def announce_focus(event=None) -> None:
-            self.after(80, lambda: self.screen_reader.speak(
-                f"{label}, combo box, current value {variable.get().strip() or 'blank'}."
-            ) if self.focus_get() is box else None)
-
-        def announce_value(event=None) -> None:
-            # A ttk drop-down temporarily gives focus to its pop-up window, so
-            # selection speech must not depend on focus still being on `box`.
-            if pending_announcement[0] is not None:
-                try: self.after_cancel(pending_announcement[0])
-                except (tk.TclError, ValueError): pass
-            pending_announcement[0] = self.after(60, lambda: self.screen_reader.speak(
-                f"{label}, {variable.get().strip() or 'blank'}."
-            ))
-
-        box.bind("<FocusIn>", announce_focus, add="+")
-        box.bind("<<ComboboxSelected>>", announce_value, add="+")
-        box.bind("<KeyRelease-Up>", announce_value, add="+")
-        box.bind("<KeyRelease-Down>", announce_value, add="+")
+        accessible_combo.bind_combobox(self, box, label, variable)
 
     def bind_accessible_text(self, widget: tk.Text, label: str) -> None:
         """Add dependable NVDA feedback to a multiline Tk edit control."""
@@ -1112,6 +1103,8 @@ class QuickEdit(tk.Tk):
         return self.document
 
     def new_file(self) -> None:
+        if not self._confirm_document_change():
+            return
         self.stop(announce=False)
         self.document = AudioDocument(
             channels=2,
@@ -1120,6 +1113,7 @@ class QuickEdit(tk.Tk):
             frames=b"",
             source_path="Untitled.wav",
         )
+        self._mark_document_saved()
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.title("QuickEdit - Untitled")
@@ -1186,6 +1180,8 @@ class QuickEdit(tk.Tk):
         return result[0] if result else None
 
     def _open_path(self, path: str, announce: bool = True) -> bool:
+        if not self._confirm_document_change():
+            return False
         if not os.path.isfile(path):
             self.announce(f"File not found: {os.path.basename(path)}.")
             self._forget_missing_path(path)
@@ -1258,6 +1254,10 @@ class QuickEdit(tk.Tk):
             with source:
                 if source.getcomptype() != "NONE":
                     raise ValueError("This operation supports uncompressed PCM WAV files only.")
+                try:
+                    metadata = self._normalized_metadata(self.media.read_metadata(path)) if extension not in {".mid", ".midi"} else {}
+                except (OSError, MediaError):
+                    metadata = {}
                 document = AudioDocument(
                     channels=source.getnchannels(),
                     sample_width=source.getsampwidth(),
@@ -1267,7 +1267,7 @@ class QuickEdit(tk.Tk):
                     save_path=path if os.path.splitext(path)[1].lower() == ".wav" else None,
                     midi_path=path if extension in {".mid", ".midi"} else None,
                     soundfont_path=self.soundfont_path if extension in {".mid", ".midi"} and renderer == "soundfont" else None,
-                    metadata=self._normalized_metadata(self.media.read_metadata(path)) if extension not in {".mid", ".midi"} else {},
+                    metadata=metadata,
                 )
             if temporary:
                 os.remove(temporary)
@@ -1276,6 +1276,7 @@ class QuickEdit(tk.Tk):
             return False
         self.stop()
         self.document = document
+        self._mark_document_saved()
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.title(f"QuickEdit - {os.path.basename(path)}")
@@ -1295,6 +1296,52 @@ class QuickEdit(tk.Tk):
         try:
             with open(self._history_path, "r", encoding="utf-8") as source:
                 settings = json.load(source)
+            if not isinstance(settings, dict):
+                return
+            # Validate each setting independently: one damaged preference must
+            # not prevent later, valid library and device preferences loading.
+            for key in ("recent_files", "favorite_files", "library_files", "library_display_fields"):
+                value = settings.get(key)
+                if isinstance(value, list):
+                    settings[key] = [item for item in value if isinstance(item, str) and item]
+                else:
+                    settings.pop(key, None)
+            playlists = settings.get("library_playlists")
+            if isinstance(playlists, dict):
+                settings["library_playlists"] = {
+                    name: [path for path in paths if isinstance(path, str) and path]
+                    for name, paths in playlists.items() if isinstance(paths, list)
+                }
+            else:
+                settings.pop("library_playlists", None)
+            for key, low, high in (("online_download_sample_rate", 1000, 384000),
+                                   ("online_download_bitrate", 8, 1536),
+                                   ("keyboard_sample_root", 0, 127)):
+                try:
+                    value = settings[key]
+                    number = int(value)
+                    if isinstance(value, bool) or isinstance(value, (list, dict)) or not low <= number <= high:
+                        raise ValueError
+                    settings[key] = number
+                except (KeyError, ValueError, TypeError, OverflowError):
+                    settings.pop(key, None)
+            channels = settings.get("muted_midi_channels")
+            settings["muted_midi_channels"] = [
+                channel for channel in channels
+                if isinstance(channel, (str, int)) and str(channel).isascii()
+                and str(channel).isdigit() and 0 <= int(channel) < 16
+            ] if isinstance(channels, list) else []
+            streams = settings.get("saved_streams")
+            settings["saved_streams"] = [
+                {**item, "name": item.get("name") or item["url"], "provider": item.get("provider") or "Direct link"}
+                for item in streams if isinstance(item, dict)
+                and isinstance(item.get("url"), str) and item["url"]
+                and all(isinstance(item.get(key, ""), str) for key in ("name", "provider"))
+            ] if isinstance(streams, list) else []
+            for key in ("last_open_directory", "workspace_mode", "library_sort_mode", "repeat_mode",
+                        "soundfont_path", "keyboard_sample_path", "keyboard_instrument_mode", "online_download_format"):
+                if key in settings and not isinstance(settings[key], str):
+                    settings.pop(key)
             saved_input = settings.get("input_device")
             if isinstance(saved_input, dict) and all(isinstance(saved_input.get(key), str) for key in ("id", "name", "backend")):
                 self.input_device = AudioDevice(saved_input["id"], saved_input["name"], saved_input["backend"])
@@ -1314,6 +1361,7 @@ class QuickEdit(tk.Tk):
             self.library_files = [str(path) for path in settings.get("library_files", self.__dict__.get("library_files", []))]
             raw_playlists = settings.get("library_playlists", self.__dict__.get("library_playlists", {}))
             self.library_playlists = {str(name): [str(path) for path in paths] for name, paths in raw_playlists.items()} if isinstance(raw_playlists, dict) else {}
+            self.library_display_fields = library_tools.valid_fields(settings.get("library_display_fields"))
             sort_mode = str(settings.get("library_sort_mode", self.__dict__.get("library_sort_mode", "track")))
             self.library_sort_mode = sort_mode if sort_mode in {"track", "title", "artist", "album", "added", "shuffle"} else "track"
             repeat_mode = str(settings.get("repeat_mode", self.__dict__.get("repeat_mode", "off")))
@@ -1332,13 +1380,14 @@ class QuickEdit(tk.Tk):
             pass
 
     def _save_file_history(self) -> None:
-        os.makedirs(os.path.dirname(self._history_path), exist_ok=True)
         settings = {}
         try:
             with open(self._history_path, "r", encoding="utf-8") as source:
                 settings = json.load(source)
         except (OSError, ValueError, TypeError):
             pass
+        if not isinstance(settings, dict):
+            settings = {}
         device = self.__dict__.get("input_device")
         settings.update(
             input_device={"id": device.id, "name": device.name, "backend": device.backend} if device else None,
@@ -1352,6 +1401,7 @@ class QuickEdit(tk.Tk):
             workspace_mode=self.__dict__.get("workspace_mode", "editor"),
             library_files=self.__dict__.get("library_files", []),
             library_playlists=self.__dict__.get("library_playlists", {}),
+            library_display_fields=library_tools.valid_fields(self.__dict__.get("library_display_fields")),
             library_sort_mode=self.__dict__.get("library_sort_mode", "track"),
             repeat_mode=self.__dict__.get("repeat_mode", "off"),
             muted_midi_channels=sorted(self.__dict__.get("muted_midi_channels", set())),
@@ -1361,8 +1411,26 @@ class QuickEdit(tk.Tk):
             keyboard_sample_root=self.__dict__.get("keyboard_sample_root", 60),
             keyboard_instrument_mode=self.__dict__.get("keyboard_instrument_mode", "synth"),
         )
-        with open(self._history_path, "w", encoding="utf-8") as target:
-            json.dump(settings, target, indent=2)
+        temporary = None
+        try:
+            folder = os.path.dirname(self._history_path)
+            os.makedirs(folder, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder,
+                                             prefix="settings-", suffix=".tmp", delete=False) as target:
+                temporary = target.name
+                json.dump(settings, target, indent=2)
+                target.flush()
+                os.fsync(target.fileno())
+            replace_file(temporary, self._history_path)
+        except (OSError, ValueError, TypeError) as error:
+            messagebox.showwarning("Preferences could not be saved",
+                                   f"Your changes remain available in this session, but QuickEdit could not save its preferences.\n\n{error}", parent=self)
+        finally:
+            if temporary and os.path.exists(temporary):
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
 
     def _remember_recent(self, path: str) -> None:
         path = os.path.abspath(path)
@@ -1431,6 +1499,9 @@ class QuickEdit(tk.Tk):
             filetypes=[("Audio files", "*.wav *.mp3 *.flac *.ogg *.oga *.opus *.m4a *.aac *.wma *.aiff *.aif *.au *.snd *.caf *.wv *.mka *.webm *.mid *.midi"), ("All files", "*.*")],
             parent=self,
         )
+        self._add_library_paths(paths)
+
+    def _add_library_paths(self, paths) -> None:
         if not paths:
             return
         self.last_open_directory = os.path.dirname(os.path.abspath(paths[0]))
@@ -1505,28 +1576,30 @@ class QuickEdit(tk.Tk):
             return (-added_index,)
         return artist.casefold(), album.casefold(), disc, track, title.casefold()
 
-    def browse_library(self, category: str, selected_paths: list[str] | None = None, focus_path: str | None = None) -> None:
+    def browse_library(self, category: str, selected_paths: list[str] | None = None, focus_path: str | None = None, back=None) -> None:
         if category == "recent":
-            paths = [path for path in self.recent_files if os.path.isfile(path)]
+            paths = list(self.recent_files)
         elif category == "favorites":
-            paths = [path for path in self.favorite_files if os.path.isfile(path)]
+            paths = list(self.favorite_files)
         elif selected_paths is not None:
-            paths = [path for path in selected_paths if os.path.isfile(path)]
+            paths = list(selected_paths)
         else:
-            paths = [path for path in self.library_files if os.path.isfile(path)]
-        if not paths:
-            self.announce("This library section is empty. Use Add Audio Files to Library first.")
+            paths = list(self.library_files)
+        self._load_library_records(paths, lambda records: self._show_library_records(category, records, focus_path, back), back)
+
+    def _load_library_records(self, paths, ready, back=None):
+        library_tools.load_library_records(self, paths, ready, back)
+
+    def _show_library_records(self, category, records, focus_path=None, back=None):
+        if category in {"artist", "album"}:
+            self._browse_library_groups(category, [path for path, tags in records], back, records=records)
             return
         items = []
-        for added_index, path in enumerate(paths):
-            try: tags = self._normalized_metadata(self.media.read_metadata(path))
-            except (OSError, MediaError): tags = {}
+        for added_index, (path, tags) in enumerate(records):
             title = tags.get("title") or os.path.splitext(os.path.basename(path))[0]
             artist = tags.get("artist", "Unknown artist"); album = tags.get("album", "Unknown album")
             track = tags.get("track", "unknown")
-            if category == "artist": label = f"{artist}; {album}; track {track}; {title}"
-            elif category == "album": label = f"{album}; track {track}; {title}; {artist}"
-            else: label = f"Track {track}; {title}; {artist}; {album}"
+            label = library_tools.song_label(tags, path, self.__dict__.get("library_display_fields"))
             sort_key = self._selected_library_sort_key(tags, title, artist, album, added_index)
             if self.library_sort_mode == "added" and category == "recent":
                 sort_key = (added_index,)
@@ -1562,9 +1635,63 @@ class QuickEdit(tk.Tk):
         def close(event=None) -> str: dialog.destroy(); return "break"
         choices.bind("<FocusIn>", lambda event: self.screen_reader.speak(f"Library {category} list. Use arrows and press Enter to play."))
         choices.bind("<<ListboxSelect>>", speak); choices.bind("<Return>", open_song); choices.bind("<Double-Button-1>", open_song)
+        if back:
+            def go_back(event=None):
+                dialog.destroy(); back(); return "break"
+            self.accessible_button(buttons, "Back", go_back).pack(side="left")
+            dialog.bind("<Alt-Left>", go_back)
+            dialog.bind("<BackSpace>", go_back)
         self.accessible_button(buttons, "Open and Play", open_song).pack(side="left")
         self.accessible_button(buttons, "Close Library", close).pack(side="right")
         dialog.bind("<Escape>", close); dialog.protocol("WM_DELETE_WINDOW", close); choices.focus_set()
+
+    def _library_navigation(self, title, entries, back=None, selected=0):
+        dialog = tk.Toplevel(self); dialog.title(title); dialog.transient(self); dialog.grab_set()
+        tk.Label(dialog, text=title + ". Press Enter to open; Backspace or Alt+Left to go back.").pack(anchor="w")
+        choices = tk.Listbox(dialog, exportselection=False, width=85, height=20)
+        choices.pack(fill="both", expand=True)
+        for label, callback in entries: choices.insert("end", label)
+        if entries:
+            choices.selection_set(selected); choices.activate(selected); choices.see(selected)
+        def open_item(event=None):
+            selection = choices.curselection()
+            if selection:
+                dialog.destroy(); entries[selection[0]][1](selection[0])
+            return "break"
+        def go_back(event=None):
+            dialog.destroy()
+            if back: back()
+            return "break"
+        choices.bind("<Return>", open_item); choices.bind("<Double-Button-1>", open_item)
+        choices.bind("<FocusIn>", lambda event: self.screen_reader.speak(title + ". Use arrows and Enter to open."))
+        choices.bind("<<ListboxSelect>>", lambda event: self.screen_reader.speak(choices.get(choices.curselection()[0])) if choices.curselection() else None)
+        self.accessible_button(dialog, "Open", open_item).pack(side="left")
+        if back:
+            self.accessible_button(dialog, "Back", go_back).pack(side="left")
+            dialog.bind("<Alt-Left>", go_back)
+            dialog.bind("<BackSpace>", go_back)
+        self.accessible_button(dialog, "Close Library", dialog.destroy).pack(side="right")
+        dialog.bind("<Escape>", lambda event: dialog.destroy()); choices.focus_set()
+
+    def _browse_library_groups(self, category, paths, back=None, selected=0, records=None):
+        if records is None:
+            self._load_library_records(paths, lambda loaded: self._browse_library_groups(category, paths, back, selected, loaded), back)
+            return
+        entries = []
+        for label, members in library_tools.group_records(records, category):
+            def open_group(index, label=label, members=members):
+                parent = lambda: self._browse_library_groups(category, paths, back, index, records)
+                if category == "artist":
+                    def artist_menu(selected=0):
+                        self._library_navigation(label, [
+                            ("Albums", lambda index: self.browse_library("album", members, back=lambda: artist_menu(0))),
+                            ("Songs", lambda index: self.browse_library(label + " songs", members, back=lambda: artist_menu(1))),
+                        ], parent, selected)
+                    artist_menu()
+                else:
+                    self.browse_library(label + " tracks", members, back=parent)
+            entries.append((label, open_group))
+        self._library_navigation("Artists" if category == "artist" else "Albums", entries, back, selected)
 
     def create_library_playlist(self) -> None:
         name = self._accessible_text_prompt("Create Playlist", "Playlist name")
@@ -1812,6 +1939,7 @@ class QuickEdit(tk.Tk):
         frames = frames[: len(frames) - (len(frames) % frame_size)]
         self.stop(announce=False)
         self.document = AudioDocument(channels, bits // 8, rate, frames, path)
+        self._mark_document_saved()
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.title(f"QuickEdit - {os.path.basename(path)}")
@@ -1820,6 +1948,8 @@ class QuickEdit(tk.Tk):
         self.announce(f"Opened raw PCM. {rate} Hertz, {bits} bit, {channels} channels. Duration {format_time(self.document.duration)}.")
 
     def _load_online_wav(self, path: str, title: str) -> bool:
+        if not self._confirm_document_change():
+            return False
         try:
             with wave.open(path, "rb") as source:
                 document = AudioDocument(
@@ -1831,6 +1961,10 @@ class QuickEdit(tk.Tk):
             return False
         self.stop(announce=False)
         self.document = document
+        if self.__dict__.get('workspace_mode') == 'library':
+            self._mark_document_saved()
+        else:
+            self._saved_document_state = None
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.title(f"QuickEdit - {title}")
@@ -1896,10 +2030,11 @@ class QuickEdit(tk.Tk):
         buttons.grid(row=6, column=0, sticky="ew", padx=12, pady=12)
         self.accessible_button(buttons, "Save Download Settings", save_settings).pack(side="left")
         self.accessible_button(buttons, "Cancel Download Settings", dialog.destroy).pack(side="right")
-        for box, spoken_name in (
-            (format_box, "Download format"), (rate_box, "Sample rate"), (bitrate_box, "Compressed audio bitrate")
+        for box, spoken_name, variable in (
+            (format_box, "Download format", format_var), (rate_box, "Sample rate", rate_var),
+            (bitrate_box, "Compressed audio bitrate", bitrate_var)
         ):
-            box.bind("<FocusIn>", lambda event, name=spoken_name: self.screen_reader.speak(name))
+            self.bind_accessible_combobox(box, spoken_name, variable)
             box.bind("<Return>", save_settings)
         dialog.columnconfigure(0, weight=1)
         format_box.focus_set()
@@ -2389,19 +2524,42 @@ class QuickEdit(tk.Tk):
         self._remember_recent(target_path)
         self.announce(f"Downloaded {os.path.basename(target_path)}.")
 
-    def save(self) -> None:
-        document = self.require_document()
-        if not document:
-            return
-        if not document.save_path:
-            self.save_as()
-            return
-        self._save_to(document.save_path)
+    def _document_state(self):
+        document = self.document
+        if document is None:
+            return None
+        return (document.frames, document.channels, document.sample_width, document.frame_rate, dict(document.metadata))
 
-    def save_as(self) -> None:
+    def _mark_document_saved(self):
+        self._saved_document_state = self._document_state()
+
+    def _document_has_changes(self):
+        if not self.__dict__.get('document') or '_saved_document_state' not in self.__dict__:
+            return False
+        return self._document_state() != self._saved_document_state
+
+    def _confirm_document_change(self):
+        if self.__dict__.get('record_process'):
+            self.stop_recording()
+        if not self._document_has_changes():
+            return True
+        answer = messagebox.askyesnocancel('Unsaved audio', 'Save changes to the current audio before continuing?', parent=self)
+        if answer is None:
+            return False
+        return bool(self.save()) if answer else True
+
+    def save(self) -> bool:
         document = self.require_document()
         if not document:
-            return
+            return False
+        if not document.save_path:
+            return self.save_as()
+        return self._save_to(document.save_path)
+
+    def save_as(self) -> bool:
+        document = self.require_document()
+        if not document:
+            return False
         stem = os.path.splitext(os.path.basename(document.source_path))[0]
         path = filedialog.asksaveasfilename(
             title="Save edited audio as",
@@ -2442,13 +2600,15 @@ class QuickEdit(tk.Tk):
             ],
         )
         if not path:
-            return
-        self._save_to(path)
+            return False
+        if self.output_format_settings(path):
+            return self._save_to(path)
+        return False
 
-    def _save_to(self, path: str) -> None:
+    def _save_to(self, path: str) -> bool:
         document = self.document
         if not document:
-            return
+            return False
         try:
             extension = os.path.splitext(path)[1].lower()
             conversion_requested = any((
@@ -2457,10 +2617,12 @@ class QuickEdit(tk.Tk):
                 self.export_bit_depth and self.export_bit_depth != document.sample_width * 8,
             ))
             if extension == ".wav" and not conversion_requested and not document.metadata:
-                self._write_wav(path, document.frames)
+                with atomic_output(path) as staged:
+                    self._write_wav(staged, document.frames)
             elif extension in {".raw", ".pcm"} and not conversion_requested:
-                with open(path, "wb") as target:
-                    target.write(document.frames)
+                with atomic_output(path) as staged:
+                    with open(staged, "wb") as target:
+                        target.write(document.frames)
             else:
                 handle, wav_path = tempfile.mkstemp(prefix="quickedit-export-", suffix=".wav")
                 os.close(handle)
@@ -2479,10 +2641,12 @@ class QuickEdit(tk.Tk):
                         os.remove(wav_path)
         except (wave.Error, OSError, MediaError) as exc:
             messagebox.showerror("Could not save audio", str(exc), parent=self)
-            return
+            return False
         document.save_path = path
+        self._mark_document_saved()
         self.title(f"QuickEdit - {os.path.basename(path)}")
         self.announce(f"Saved {os.path.basename(path)}.")
+        return True
 
     @staticmethod
     def _normalized_metadata(tags: dict[str, str]) -> dict[str, str]:
@@ -2571,42 +2735,20 @@ class QuickEdit(tk.Tk):
         dialog.bind("<Escape>", cancel); dialog.protocol("WM_DELETE_WINDOW", cancel); dialog.columnconfigure(0, weight=1)
         entries[0].focus_set(); self.wait_window(dialog)
 
-    def output_format_settings(self) -> None:
+    def output_format_settings(self, path: str) -> bool:
         document = self.require_document()
         if not document:
-            return
-        sample_rate = simpledialog.askinteger(
-            "Output sample rate", "Sample rate in Hz:", parent=self,
-            initialvalue=self.export_sample_rate or document.frame_rate, minvalue=1000, maxvalue=384000,
-        )
-        if sample_rate is None:
-            return
-        bit_depth = simpledialog.askinteger(
-            "Output bit depth", "PCM bit depth: 8, 16, 24, or 32:", parent=self,
-            initialvalue=self.export_bit_depth or document.sample_width * 8, minvalue=8, maxvalue=32,
-        )
-        if bit_depth is None:
-            return
-        if bit_depth not in (8, 16, 24, 32):
-            messagebox.showerror("Invalid bit depth", "Choose 8, 16, 24, or 32 bits.", parent=self)
-            return
-        channels = simpledialog.askinteger(
-            "Output channels", "Number of channels, usually 1 for mono or 2 for stereo:", parent=self,
-            initialvalue=self.export_channels or document.channels, minvalue=1, maxvalue=8,
-        )
-        if channels is None:
-            return
-        bitrate = simpledialog.askinteger(
-            "Compressed-audio bitrate", "Bitrate in kilobits per second:", parent=self,
-            initialvalue=self.export_bitrate, minvalue=8, maxvalue=1536,
-        )
-        if bitrate is None:
-            return
-        self.export_sample_rate = sample_rate
-        self.export_bit_depth = bit_depth
-        self.export_channels = channels
-        self.export_bitrate = bitrate
-        self.announce(f"Output set to {sample_rate} Hz, {bit_depth}-bit, {channels} channels, {bitrate} kilobits per second for compressed formats.")
+            return False
+        options = export_options.choose_options(self, path, (
+            self.export_sample_rate or document.frame_rate,
+            self.export_bit_depth or document.sample_width * 8,
+            self.export_channels or document.channels,
+            self.export_bitrate,
+        ))
+        if options is None:
+            return False
+        self.export_sample_rate, self.export_bit_depth, self.export_channels, self.export_bitrate = options
+        return True
 
     @staticmethod
     def _unused_output_path(folder: str, stem: str, extension: str, source: str) -> str:
@@ -2646,7 +2788,7 @@ class QuickEdit(tk.Tk):
             tk.Label(dialog, text=label).grid(row=row * 2, column=0, sticky="w", padx=12, pady=(8 if row else 12, 2))
             if key == "format":
                 control = ttk.Combobox(dialog, textvariable=values[key], values=formats, state="readonly", takefocus=True)
-                control.bind("<FocusIn>", lambda event: self.screen_reader.speak("Output format, combo box."))
+                self.bind_accessible_combobox(control, label, values[key])
             else:
                 control = tk.Entry(dialog, textvariable=values[key], takefocus=True)
                 self.bind_accessible_entry(control, label, values[key])
@@ -4061,7 +4203,7 @@ class QuickEdit(tk.Tk):
         if not document:
             return
         document.cursor_frame = 0
-        self._play_frames(document.frames, 0, 1, f"Playing {self._library_track_name()}.")
+        self._play_frames(document.frames, 0, 1, f"Playing {self._library_track_name()}.", library_track=True)
         self.refresh_details()
 
     def seek_library_playback(self, seconds: float) -> None:
@@ -4131,7 +4273,9 @@ class QuickEdit(tk.Tk):
             return
         self.stop()
         self.redo_stack.append(copy.deepcopy(self.document))
+        save_path = self.document.save_path
         self.document = self.undo_stack.pop()
+        self.document.save_path = save_path
         self.refresh_details()
         self.announce("Undo complete.")
 
@@ -4141,7 +4285,9 @@ class QuickEdit(tk.Tk):
             return
         self.stop()
         self.undo_stack.append(copy.deepcopy(self.document))
+        save_path = self.document.save_path
         self.document = self.redo_stack.pop()
+        self.document.save_path = save_path
         self.refresh_details()
         self.announce("Redo complete.")
 
@@ -4161,7 +4307,7 @@ class QuickEdit(tk.Tk):
         if not document:
             return
         document.cursor_frame = 0
-        self._play_frames(document.frames, 0, 1, f"Playing {self._library_track_name()} from the beginning.")
+        self._play_frames(document.frames, 0, 1, f"Playing {self._library_track_name()} from the beginning.", library_track=True)
         self.refresh_details()
 
     def play_reverse(self) -> None:
@@ -4207,6 +4353,7 @@ class QuickEdit(tk.Tk):
             start,
             1,
             f"Playing {self._library_track_name()} from {format_time(document.seconds_at(start))}." if announce else None,
+            library_track=True,
         )
 
     def _play_reverse_from_cursor(self, announce: bool = True) -> None:
@@ -5118,17 +5265,20 @@ class QuickEdit(tk.Tk):
         direction: int,
         announcement: str | None,
         reverse: bool = False,
+        library_track: bool = False,
     ) -> None:
         self.stop(announce=False)
-        handle, path = tempfile.mkstemp(prefix="quickedit-preview-", suffix=".wav")
-        os.close(handle)
-        self.temp_play_path = path
-        if reverse:
-            self._write_reversed_wav(path, frames)
-        else:
-            self._write_wav(path, frames)
+        self._library_track_playback = False
+        processed = None
         pitch_factor = 2 ** (self.playback_pitch_semitones / 12)
         try:
+            handle, path = tempfile.mkstemp(prefix="quickedit-preview-", suffix=".wav")
+            os.close(handle)
+            self.temp_play_path = path
+            if reverse:
+                self._write_reversed_wav(path, frames)
+            else:
+                self._write_wav(path, frames)
             if self.playback_pitch_semitones:
                 processed = path + ".pitched.wav"
                 audio_filter = f"asetrate={self.document.frame_rate}*{pitch_factor:.8g},aresample={self.document.frame_rate}"
@@ -5136,14 +5286,20 @@ class QuickEdit(tk.Tk):
                     audio_filter += "," + self.media.tempo_filter(1 / pitch_factor)
                 self.media.transform_wav(path, processed, audio_filter, self.document.sample_width)
                 os.remove(path); os.replace(processed, path)
-        except MediaError as exc:
+            self.play_process = self.media.start_playback(path, self.output_device, self.playback_speed, volume=self.playback_volume)
+            if self.play_process is None:
+                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+        except (MediaError, OSError, wave.Error, RuntimeError) as exc:
             self.stop(announce=False)
-            messagebox.showerror("Playback pitch failed", str(exc), parent=self)
+            if processed:
+                try:
+                    os.remove(processed)
+                except OSError:
+                    pass
+            messagebox.showerror("Playback failed", str(exc), parent=self)
             return
         self.playback_time_factor = self.playback_speed * (pitch_factor if self.playback_pitch_semitones and not self.playback_pitch_preserves_speed else 1.0)
-        self.play_process = self.media.start_playback(path, self.output_device, self.playback_speed, volume=self.playback_volume)
-        if self.play_process is None:
-            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+        self._library_track_playback = library_track and self.workspace_mode == "library" and direction > 0
         self.playing = True
         self.paused = False
         self.play_direction = direction
@@ -5206,11 +5362,24 @@ class QuickEdit(tk.Tk):
         self.transport_timer = None
         if not self.playing or not self.document:
             return
+        process = self.__dict__.get("play_process")
+        exit_code = process.poll() if process is not None else None
+        if exit_code is not None and exit_code != 0:
+            self.stop(announce=False)
+            self.refresh_details()
+            self.announce("Playback failed. Check the selected output device and try again.")
+            return
         finished = self._sync_transport_cursor()
+        if exit_code == 0:
+            # The player's audio clock can finish slightly before our timer.
+            # A successful exit is normal completion, not a device failure.
+            self.document.cursor_frame = max(0, min(self.document.frame_count, self.play_target_frame))
+            finished = True
         self.refresh_details()
         if finished:
             endpoint = self.document.cursor_frame
             forward = self.play_direction > 0
+            library_track = self.__dict__.get("_library_track_playback", False) and self.workspace_mode == "library"
             self.stop(announce=False)
             if forward and self.repeat_mode == "one":
                 if self.workspace_mode == "library":
@@ -5218,13 +5387,17 @@ class QuickEdit(tk.Tk):
                 else:
                     self.master_play()
                 return
-            if forward and self.repeat_mode == "all":
-                if self.library_queue:
+            if forward and library_track:
+                queue = [path for path in self.library_queue if os.path.isfile(path)]
+                index = self._current_library_index(queue)
+                if index >= 0 and (index + 1 < len(queue) or self.repeat_mode == "all"):
                     self.play_adjacent_library_song(1)
-                elif self.workspace_mode == "library":
+                    return
+                if self.repeat_mode == "all" and not queue:
                     self.play_library_from_start()
-                else:
-                    self.master_play()
+                    return
+            elif forward and self.repeat_mode == "all":
+                self.master_play()
                 return
             self.announce(
                 f"Playback finished at {format_time(self.document.seconds_at(endpoint))}."
@@ -5280,6 +5453,11 @@ class QuickEdit(tk.Tk):
             self.announce("Playback stopped.")
 
     def destroy(self) -> None:
+        if not self._confirm_document_change():
+            return
+        pending_library = self.__dict__.get("_library_load")
+        if pending_library:
+            pending_library["cancel"]()
         self.stop_effect_preview()
         self.stop(announce=False)
         super().destroy()

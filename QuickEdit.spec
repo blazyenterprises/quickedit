@@ -10,7 +10,7 @@ botocore_datas, botocore_binaries, botocore_hiddenimports = collect_all('botocor
 
 a = Analysis(
     ['quickedit.py'],
-    pathex=['.builddeps'],
+    pathex=[],
     binaries=[('ffmpeg.exe', '.'), ('ffprobe.exe', '.'), ('mpv.exe', '.'), ('nvdaControllerClient64.dll', '.'), ('vst2_bridge_x86.exe', '.'), *pedalboard_binaries, *websocket_binaries, *boto3_binaries, *botocore_binaries],
     datas=[('runtime', 'runtime'), *pedalboard_datas, *websocket_datas, *boto3_datas, *botocore_datas],
     hiddenimports=pedalboard_hiddenimports + websocket_hiddenimports + boto3_hiddenimports + botocore_hiddenimports,

@@ -16,18 +16,69 @@ Cursor movement, selection boundaries, and transport changes are spoken
 directly through NVDA when the controller client supplied with ApricotPlayer is
 available. The visible status line remains as a fallback.
 
-## Version 1.0.4
+## Version 1.0.9
 
-Download the Windows installer or portable ZIP from the
-[latest release](https://github.com/blazyenterprises/quickedit/releases/latest).
+Three independent reviews covered accessibility, library/playback, and
+saving/settings, followed by a second review of the fixes.
 
-This release fixes library queue position after adding local songs. The browser
-highlights the newly added or currently playing song, and Previous/Next locate
-the actual loaded file instead of using a stale position. Adding files preserves
-the queue order; failed opens do not advance it. Queue boundaries follow your
-chosen library sort order and repeat setting.
+- Failed saves preserve existing files. Settings writes are atomic and malformed
+  preferences recover safely.
+- New/Open/Close asks about unsaved audio. Undo/Redo keeps the Save As destination.
+- Dropdown keystrokes cannot delete or seek editor audio. Batch and download
+  dropdowns announce choices; nested Save As cancellation restores library focus.
+- Repeat Off advances through the queue without wrapping. Failed player launches
+  and failed player exits stop cleanly without repeat or automatic advancement.
+- Metadata failures do not prevent opening audio and are retried on later browsing.
+- Folder import includes both queued and currently selected folders.
+- Lossless/PCM output honors supported bit depths. Unsupported depths are rejected
+  explicitly. Opus Save As starts with a supported sample rate.
 
-Includes the device persistence, YouTube, and verified installer fixes from 1.0.3.
+See [the audit report](AUDIT-1.0.9.md) for validation and coverage limits.
+
+## Version 1.0.8
+
+Output-setting dropdowns now announce each highlighted choice while the list
+is open, before Enter accepts it. Typed values are announced too. This fixes
+the missing feedback while changing Save As settings.
+
+## Version 1.0.7
+
+Save As now includes output settings after choosing the filename and format.
+Sample rate, PCM bit depth, channels, and compressed bitrate are together in
+one keyboard-accessible dialog. Each control announces its label and current
+value on focus and its value when a choice changes. Tab moves between controls;
+choose a preset or type a value, then activate Save Audio. Escape or Cancel Save
+leaves the file and output preferences unchanged. The separate File menu
+Output Format Settings command has been removed.
+
+## Version 1.0.6
+
+Folder selection now announces the current folder followed by the selection
+count, rather than repeatedly starting with the first selected folder. Tag
+reading runs in the background with cancellation and a per-session cache.
+Switching between Songs, Albums, and Artists reuses unchanged tags. Changed
+files refresh automatically; canceled or superseded loads cannot open stale
+views. The first scan may take time, but it no longer blocks the interface.
+
+## Library browsing
+
+Albums now lists albums; opening one shows its tracks. Artists lists artists;
+opening one offers Albums or Songs. Backspace, Alt+Left, or the Back button returns to the previous
+level and restores the selected entry. Playing a track uses the displayed song
+list as the queue.
+
+Library > Song Information Display lets you hide artist, album, track, or disc
+information and move fields earlier or later in the reading order. Title stays
+visible. These preferences are saved and are independent of sorting.
+
+Library > Add Folders to Library supports multiple selection with Control/Shift
+and Control+A. Select folders and choose Import Folders, or Queue Selected
+Folders to collect folders from several locations before importing. Queue
+Current Folder includes the location itself. All subfolders are scanned;
+unsupported files and duplicates are skipped. Folder scanning runs in the
+background. Previous/Next continues to follow the actual loaded song.
+
+Includes the device persistence, YouTube, and verified installer fixes.
 
 ## Run
 

@@ -8,6 +8,8 @@ import glob
 import time
 import uuid
 import wave
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 
@@ -23,6 +25,47 @@ class AudioDevice:
 
 class MediaError(RuntimeError):
     pass
+
+
+def validate_export_depth(extension, bit_depth):
+    supported = {
+        '.flac': (16, 24), '.mka': (16, 24), '.mkv': (16, 24),
+        '.mov': (16, 24), '.tta': (8, 16, 24), '.voc': (8,), '.sox': (32,),
+    }.get(extension.lower())
+    if supported and bit_depth not in supported:
+        choices = ' or '.join(str(value) for value in supported)
+        raise MediaError(f'{extension.upper()} output supports {choices}-bit audio in this encoder. Choose a supported bit depth.')
+
+
+def validate_export_rate(extension, sample_rate):
+    if extension.lower() in {'.opus', '.webm'} and sample_rate not in {None, 8000, 12000, 16000, 24000, 48000}:
+        raise MediaError('Opus output requires 8000, 12000, 16000, 24000, or 48000 Hertz. Choose 48000 for full-band audio.')
+
+
+@contextmanager
+def atomic_output(path):
+    """Keep an existing destination intact until the entire write succeeds."""
+    destination = os.path.abspath(path)
+    fd, staged = tempfile.mkstemp(prefix='.quickedit-', suffix=os.path.splitext(destination)[1], dir=os.path.dirname(destination))
+    os.close(fd)
+    try:
+        yield staged
+        replace_file(staged, destination)
+    finally:
+        if os.path.exists(staged):
+            os.remove(staged)
+
+
+def replace_file(source, destination):
+    """Allow brief Windows scanner/sharing locks to clear before failing."""
+    for attempt in range(4):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == 3:
+                raise
+            time.sleep(.05 * (attempt + 1))
 
 
 class MediaBackend:
@@ -58,7 +101,7 @@ class MediaBackend:
     def formats_available(self) -> bool:
         return self.ffmpeg is not None
 
-    def _run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+    def _run(self, command: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             command,
             capture_output=True,
@@ -66,6 +109,7 @@ class MediaBackend:
             encoding="utf-8",
             errors="replace",
             creationflags=CREATE_NO_WINDOW,
+            timeout=timeout,
         )
         if result.returncode:
             detail = result.stderr.strip().splitlines()
@@ -112,9 +156,12 @@ class MediaBackend:
     def read_metadata(self, source: str) -> dict[str, str]:
         if not self.ffprobe:
             return {}
-        result = self._run([
-            self.ffprobe, "-v", "error", "-show_entries", "format_tags", "-of", "json", source,
-        ])
+        try:
+            result = self._run([
+                self.ffprobe, "-v", "error", "-show_entries", "format_tags", "-of", "json", source,
+            ], timeout=10)
+        except subprocess.TimeoutExpired as error:
+            raise MediaError('Reading audio tags timed out.') from error
         try:
             tags = json.loads(result.stdout).get("format", {}).get("tags", {})
         except (ValueError, TypeError):
@@ -134,9 +181,17 @@ class MediaBackend:
             raise MediaError(f"Could not determine the duration of {os.path.basename(source)}.") from exc
 
     def encode(self, wav_source: str, target: str, sample_rate: int | None = None, channels: int | None = None, bit_depth: int = 16, bitrate_kbps: int = 192, metadata: dict[str, str] | None = None) -> None:
+        with atomic_output(target) as staged:
+            self._encode_direct(wav_source, staged, sample_rate, channels, bit_depth, bitrate_kbps, metadata)
+
+    def _encode_direct(self, wav_source: str, target: str, sample_rate: int | None = None, channels: int | None = None, bit_depth: int = 16, bitrate_kbps: int = 192, metadata: dict[str, str] | None = None) -> None:
         if not self.ffmpeg:
             raise MediaError("FFmpeg was not found. Save as WAV instead.")
         extension = os.path.splitext(target)[1].lower()
+        validate_export_depth(extension, bit_depth)
+        validate_export_rate(extension, sample_rate)
+        if extension in {'.opus', '.webm'} and sample_rate is None:
+            sample_rate = 48000
         codecs = {
             ".wav": ["-f", "wav", "-c:a", {8: "pcm_u8", 16: "pcm_s16le", 24: "pcm_s24le", 32: "pcm_s32le"}.get(bit_depth, "pcm_s16le")],
             ".mp3": ["-c:a", "libmp3lame", "-b:a", f"{bitrate_kbps}k"],
@@ -153,11 +208,11 @@ class MediaBackend:
             ".aiff": ["-c:a", {8: "pcm_s8", 16: "pcm_s16be", 24: "pcm_s24be", 32: "pcm_s32be"}.get(bit_depth, "pcm_s16be")],
             ".aif": ["-c:a", {8: "pcm_s8", 16: "pcm_s16be", 24: "pcm_s24be", 32: "pcm_s32be"}.get(bit_depth, "pcm_s16be")],
             ".au": ["-f", "au", "-c:a", {8: "pcm_s8", 16: "pcm_s16be", 24: "pcm_s24be", 32: "pcm_s32be"}.get(bit_depth, "pcm_s16be")],
-            ".snd": ["-f", "au", "-c:a", "pcm_s16be"],
-            ".caf": ["-f", "caf", "-c:a", "pcm_s16le"],
+            ".snd": ["-f", "au", "-c:a", {8: "pcm_s8", 16: "pcm_s16be", 24: "pcm_s24be", 32: "pcm_s32be"}.get(bit_depth, "pcm_s16be")],
+            ".caf": ["-f", "caf", "-c:a", {8: "pcm_s8", 16: "pcm_s16le", 24: "pcm_s24le", 32: "pcm_s32le"}.get(bit_depth, "pcm_s16le")],
             ".voc": ["-f", "voc", "-c:a", "pcm_u8"],
-            ".w64": ["-f", "w64", "-c:a", "pcm_s16le"],
-            ".rf64": ["-f", "wav", "-rf64", "always", "-c:a", "pcm_s16le"],
+            ".w64": ["-f", "w64", "-c:a", {8: "pcm_u8", 16: "pcm_s16le", 24: "pcm_s24le", 32: "pcm_s32le"}.get(bit_depth, "pcm_s16le")],
+            ".rf64": ["-f", "wav", "-rf64", "always", "-c:a", {8: "pcm_u8", 16: "pcm_s16le", 24: "pcm_s24le", 32: "pcm_s32le"}.get(bit_depth, "pcm_s16le")],
             ".ac3": ["-f", "ac3", "-c:a", "ac3", "-b:a", f"{bitrate_kbps}k"],
             ".eac3": ["-f", "eac3", "-c:a", "eac3", "-b:a", f"{bitrate_kbps}k"],
             ".amr": ["-f", "amr", "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k"],
@@ -165,7 +220,7 @@ class MediaBackend:
             ".wv": ["-f", "wv", "-c:a", "wavpack"],
             ".adx": ["-f", "adx", "-c:a", "adpcm_adx"],
             ".sox": ["-f", "sox", "-c:a", "pcm_s32le"],
-            ".ircam": ["-f", "ircam", "-c:a", "pcm_s16le"],
+            ".ircam": ["-f", "ircam", "-c:a", {8: "pcm_s8", 16: "pcm_s16le", 24: "pcm_s24le", 32: "pcm_s32le"}.get(bit_depth, "pcm_s16le")],
             ".mov": ["-f", "mov", "-c:a", "alac"],
             ".mp4": ["-f", "mp4", "-c:a", "aac", "-b:a", f"{bitrate_kbps}k"],
             ".3gp": ["-f", "3gp", "-c:a", "aac", "-b:a", f"{bitrate_kbps}k"],
@@ -177,6 +232,11 @@ class MediaBackend:
         options = codecs.get(extension)
         if options is None:
             options = []  # Let FFmpeg infer a suitable muxer and codec from the extension.
+        if extension in {".flac", ".mka", ".mkv", ".wv", ".tta", ".mov"}:
+            sample_format = "u8" if bit_depth == 8 else "s16" if bit_depth <= 16 else "s32"
+            if extension in {'.wv', '.mov'}:
+                sample_format += 'p'
+            options += ["-sample_fmt", sample_format, "-bits_per_raw_sample", str(bit_depth)]
         conversion = []
         if sample_rate:
             conversion += ["-ar", str(sample_rate)]
